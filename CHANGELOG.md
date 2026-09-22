@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0 (2026-09-22)
+
+### Features
+
+- track Copilot CLI usage from session-state files (dd1c7e4)
+
 ## Unreleased
 
 - Track Copilot CLI usage from local session-state files: per-model-request token deltas recorded when a session ends, attributed by the session's working directory, with unmatched sessions grouped under "Copilot CLI".
