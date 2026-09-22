@@ -37,15 +37,17 @@ interface FileState {
   dropping: boolean;
   cwd?: string;
   projectId?: string;
+  /** Event ordinal within this file; disambiguates events lacking an id. */
+  seq: number;
   emitted: Set<string>;
   baselines: Map<string, ModelSnapshot>;
 }
-
 const freshState = (): FileState => ({
   offset: 0,
   decoder: new StringDecoder("utf8"),
   pending: "",
   dropping: false,
+  seq: 0,
   emitted: new Set(),
   baselines: new Map(),
 });
@@ -56,7 +58,7 @@ const num = (value: unknown): number =>
     : 0;
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null
+  typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 
@@ -192,6 +194,7 @@ export class CliUsageScanner {
       this.skippedLines++;
       return;
     }
+    st.seq++;
     if (event.type === "session.start") {
       const cwd = record(record(event.data)?.context)?.cwd;
       if (typeof cwd === "string" && cwd !== st.cwd) {
@@ -213,7 +216,9 @@ export class CliUsageScanner {
         ? event.id
         : typeof event.id === "number" && Number.isFinite(event.id)
           ? String(event.id)
-          : `t${timestamp}`;
+          : // Events without an id fall back to timestamp + file ordinal, so
+            // same-millisecond shutdowns cannot overwrite each other.
+            `t${timestamp}-${st.seq}`;
     for (const [model, raw] of Object.entries(metrics)) {
       if (!model) continue;
       const entry = record(raw);

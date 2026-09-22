@@ -269,3 +269,27 @@ test("missing session-state root means undetected, never throws", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("id-less shutdowns in the same millisecond do not overwrite each other", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hoosage-cli-"));
+  try {
+    const file = await sessionDir(dir, "sess-6");
+    const ts = "2026-09-22T10:05:00.000Z";
+    const noId = (modelMetrics: Record<string, unknown>) =>
+      JSON.stringify({ type: "session.shutdown", timestamp: ts, data: { modelMetrics } });
+    await writeFile(
+      file,
+      noId({ "gpt-5": metrics(100, 10, 0, 0, 1) }) +
+        "\n" +
+        noId({ "gpt-5": metrics(250, 30, 0, 0, 3) }) +
+        "\n",
+    );
+    const scanner = new CliUsageScanner(dir);
+    await scanner.poll(() => "p");
+    assert.equal(scanner.calls.size, 2);
+    const inputs = [...scanner.calls.values()].map((c) => c.input).sort();
+    assert.deepEqual(inputs, [100, 150]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
