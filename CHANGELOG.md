@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1 (2026-09-22)
+
+### Bug Fixes
+
+- keep id-less CLI shutdowns distinct and reject array events (b7f09e5)
+
 ## 0.5.0 (2026-09-22)
 
 ### Features
