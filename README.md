@@ -32,7 +32,7 @@ Want a look first? **Explore a preview** shows clearly labelled sample data. Sam
 - CSV export of the selected project and period, including cost source and price-table date; unknown values stay empty.
 - A status bar indicator for today's current-project usage.
 - No hoosage account, cloud backend, credentials or outbound analytics.
-- Copilot CLI usage from local session-state files, grouped by working directory.
+- Copilot CLI and JetBrains Copilot usage from local session-state files, grouped by working directory.
 
 ## Screenshots
 
@@ -83,7 +83,7 @@ A project is a VS Code folder workspace, identified by a hash of its full worksp
 
 A saved or multi-root workspace is one **Workspace group**. Copilot's telemetry cannot reliably divide a single request across roots, so hoosage does not invent that precision. Open roots in separate VS Code windows to track them independently.
 
-Copilot CLI sessions are read from `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`) — no setup required. Usage appears after a CLI session ends and is attributed to the tracked workspace matching the session's working directory; sessions outside tracked workspaces group under **Copilot CLI**.
+Copilot CLI sessions are read from `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`) — no setup required. Usage appears after a session ends and is attributed to the tracked workspace matching the session's working directory; sessions outside tracked workspaces group under **Copilot CLI**. Sessions created by the GitHub Copilot plugin for JetBrains IDEs (`client_name: copilot-intellij` in `workspace.yaml`) are labelled JetBrains and group under **Copilot (JetBrains)** when no workspace matches.
 
 ## Local data and settings
 

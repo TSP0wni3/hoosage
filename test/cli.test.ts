@@ -4,7 +4,12 @@ import { mkdtemp, mkdir, writeFile, appendFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { CliUsageScanner, CLI_PROJECT_ID, folderPathHash } from "../src/core/cli";
+import {
+  CliUsageScanner,
+  CLI_PROJECT_ID,
+  JETBRAINS_PROJECT_ID,
+  folderPathHash,
+} from "../src/core/cli";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -289,6 +294,110 @@ test("id-less shutdowns in the same millisecond do not overwrite each other", as
     assert.equal(scanner.calls.size, 2);
     const inputs = [...scanner.calls.values()].map((c) => c.input).sort();
     assert.deepEqual(inputs, [100, 150]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("JetBrains sessions are tagged and bucketed via workspace.yaml", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hoosage-cli-"));
+  try {
+    const file = await sessionDir(dir, "sess-jb");
+    await writeFile(
+      join(dir, "sess-jb", "workspace.yaml"),
+      "client_name: copilot-intellij\n",
+    );
+    await writeFile(
+      file,
+      shutdown("sh-jb", "2026-09-22T10:01:00.000Z", {
+        "claude-sonnet-4.6": metrics(500, 60, 10, 5, 2),
+      }) + "\n",
+    );
+    const scanner = new CliUsageScanner(dir);
+    await scanner.poll(() => "p");
+    const call = [...scanner.calls.values()][0]!;
+    assert.equal(call.source, "jetbrains");
+    assert.equal(call.projectId, JETBRAINS_PROJECT_ID);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("JetBrains cwd attribution uses workspace.yaml when events lack context", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hoosage-cli-"));
+  try {
+    const file = await sessionDir(dir, "sess-jb2");
+    await writeFile(
+      join(dir, "sess-jb2", "workspace.yaml"),
+      'client_name: "copilot-intellij"\ncwd: /work/myproj\n',
+    );
+    await writeFile(
+      file,
+      shutdown("sh-jb2", "2026-09-22T10:02:00.000Z", {
+        "gpt-5": metrics(200, 40, 0, 0, 1),
+      }) + "\n",
+    );
+    const scanner = new CliUsageScanner(dir);
+    await scanner.poll((cwd) => (cwd === "/work/myproj" ? "proj-jb" : undefined));
+    const call = [...scanner.calls.values()][0]!;
+    assert.equal(call.source, "jetbrains");
+    assert.equal(call.projectId, "proj-jb");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("session.resume updates cwd attribution like session.start", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hoosage-cli-"));
+  try {
+    const file = await sessionDir(dir, "sess-r");
+    const resume = (cwd: string) =>
+      JSON.stringify({
+        type: "session.resume",
+        id: "resume-1",
+        timestamp: "2026-09-22T10:00:30.000Z",
+        data: { context: { cwd } },
+      });
+    await writeFile(
+      file,
+      resume("/work/resumed") +
+        "\n" +
+        shutdown("sh-r", "2026-09-22T10:03:00.000Z", {
+          "gpt-5": metrics(100, 20, 0, 0, 1),
+        }) +
+        "\n",
+    );
+    const scanner = new CliUsageScanner(dir);
+    await scanner.poll((cwd) => (cwd === "/work/resumed" ? "proj-r" : undefined));
+    assert.equal([...scanner.calls.values()][0]!.projectId, "proj-r");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("workspace.yaml written after events re-tags emitted calls", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hoosage-cli-"));
+  try {
+    const file = await sessionDir(dir, "sess-late");
+    await writeFile(
+      file,
+      shutdown("sh-late", "2026-09-22T10:04:00.000Z", {
+        "gpt-5": metrics(100, 20, 0, 0, 1),
+      }) + "\n",
+    );
+    const scanner = new CliUsageScanner(dir);
+    await scanner.poll(() => "p");
+    let call = [...scanner.calls.values()][0]!;
+    assert.equal(call.source, "cli");
+    assert.equal(call.projectId, CLI_PROJECT_ID);
+    await writeFile(
+      join(dir, "sess-late", "workspace.yaml"),
+      "client_name: copilot-intellij\ncwd: /work/late\n",
+    );
+    await scanner.poll((cwd) => (cwd === "/work/late" ? "proj-late" : undefined));
+    call = [...scanner.calls.values()][0]!;
+    assert.equal(call.source, "jetbrains");
+    assert.equal(call.projectId, "proj-late");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

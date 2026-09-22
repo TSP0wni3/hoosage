@@ -22,6 +22,13 @@ export function demoSnapshot(now = Date.now()): Snapshot {
     folderCount: 0,
     createdAt: now - 30 * 86400000,
   });
+  projects.push({
+    id: "copilot-jetbrains",
+    name: "Copilot (JetBrains)",
+    kind: "jetbrains",
+    folderCount: 0,
+    createdAt: now - 30 * 86400000,
+  });
   const models = ["Claude Sonnet 4.6", "GPT-5.4", "Claude Opus 4.7"];
   const calls: UsageCall[] = [];
   let seed = 47;
@@ -56,12 +63,15 @@ export function demoSnapshot(now = Date.now()): Snapshot {
   }
   // Copilot CLI session-state entries: per-model-request deltas recorded when a
   // session ends, so they carry no durationMs and aggregate many requests.
-  const cliCalls: Array<[number, number, string, string, number]> = [
-    [1, 14, "demo-1", "claude-sonnet-4.6", 9],
-    [3, 11, "copilot-cli", "claude-sonnet-4.6", 14],
-    [5, 16, "copilot-cli", "gpt-5.4", 6],
+  const cliCalls: Array<
+    [number, number, string, string, number, "cli" | "jetbrains"]
+  > = [
+    [1, 14, "demo-1", "claude-sonnet-4.6", 9, "cli"],
+    [3, 11, "copilot-cli", "claude-sonnet-4.6", 14, "cli"],
+    [5, 16, "copilot-cli", "gpt-5.4", 6, "cli"],
+    [2, 9, "copilot-jetbrains", "claude-sonnet-4.6", 7, "jetbrains"],
   ];
-  for (const [daysAgo, hour, projectId, model, requests] of cliCalls) {
+  for (const [daysAgo, hour, projectId, model, requests, source] of cliCalls) {
     const timestamp = now - daysAgo * 86400000 - hour * 3600000;
     const input = 42000 + requests * 3100;
     calls.push({
@@ -70,7 +80,7 @@ export function demoSnapshot(now = Date.now()): Snapshot {
       timestamp,
       model,
       sessionId: `cli-session-${daysAgo}`,
-      source: "cli",
+      source,
       input,
       output: 2400 + requests * 260,
       cacheRead: Math.floor(input * 0.55),

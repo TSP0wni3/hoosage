@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -11,6 +11,14 @@ const MAX_SKEW = 24 * 60 * 60 * 1000;
 
 /** Attribution bucket for CLI sessions whose cwd matches no known project. */
 export const CLI_PROJECT_ID = "copilot-cli";
+
+/** Attribution bucket for JetBrains Copilot sessions whose cwd matches no
+ * known project. JetBrains-hosted CLI sessions share the session-state tree;
+ * they are identified by client_name in workspace.yaml. */
+export const JETBRAINS_PROJECT_ID = "copilot-jetbrains";
+
+/** client_name value the JetBrains Copilot plugin writes to workspace.yaml. */
+const JETBRAINS_CLIENT = "copilot-intellij";
 
 /** sha256 hex of the normalized folder path: absolute, forward slashes,
  * no trailing slash, lowercased. Local-only attribution key; never exported. */
@@ -41,6 +49,8 @@ interface FileState {
   seq: number;
   emitted: Set<string>;
   baselines: Map<string, ModelSnapshot>;
+  /** workspace.yaml probe: undefined until read, null when absent/unreadable. */
+  workspace?: { clientName?: string; cwd?: string } | null;
 }
 const freshState = (): FileState => ({
   offset: 0,
@@ -51,6 +61,28 @@ const freshState = (): FileState => ({
   emitted: new Set(),
   baselines: new Map(),
 });
+
+/** Minimal field extraction from workspace.yaml — a flat CLI-written file.
+ * `client_name` and `cwd` are matched at any indentation (the plugin may nest
+ * them under a metadata block); everything else is ignored. Quoting is
+ * tolerated; a `#` starts a comment only after whitespace, so paths
+ * containing `#` survive. */
+function parseWorkspace(content: string): {
+  clientName?: string;
+  cwd?: string;
+} {
+  const field = (name: string): string | undefined => {
+    const match = content.match(
+      new RegExp(
+        `^[ \\t]*${name}:[ \\t]*(?:["']([^"'\\n]*)["']|([^\\s#][^\\n]*?))(?:[ \\t]+#[^\\n]*)?[ \\t]*$`,
+        "m",
+      ),
+    );
+    const value = match?.[1] ?? match?.[2];
+    return value?.trim() || undefined;
+  };
+  return { clientName: field("client_name"), cwd: field("cwd") };
+}
 
 const num = (value: unknown): number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -129,6 +161,30 @@ export class CliUsageScanner {
     }
     st.inode = info.ino;
     this.files.set(sessionId, st);
+    if (st.workspace === undefined || st.workspace === null) {
+      // workspace.yaml is written once at session start; a missing file is
+      // re-probed on each poll so late writes are still picked up.
+      const content = await readFile(
+        join(this.root, sessionId, "workspace.yaml"),
+        "utf8",
+      ).catch(() => undefined);
+      st.workspace = content === undefined ? null : parseWorkspace(content);
+      if (st.workspace) {
+        if (st.cwd === undefined && st.workspace.cwd)
+          st.cwd = st.workspace.cwd;
+        // Re-tag calls emitted before the file appeared.
+        st.projectId = undefined;
+        for (const id of st.emitted) {
+          const call = this.calls.get(id);
+          if (!call) continue;
+          call.source =
+            st.workspace.clientName === JETBRAINS_CLIENT
+              ? "jetbrains"
+              : "cli";
+          call.projectId = this.projectIdFor(st, resolve);
+        }
+      }
+    }
     const length = Math.min(BATCH, info.size - st.offset);
     const caughtUp = info.size <= st.offset + length;
     if (!length) return caughtUp;
@@ -195,7 +251,7 @@ export class CliUsageScanner {
       return;
     }
     st.seq++;
-    if (event.type === "session.start") {
+    if (event.type === "session.start" || event.type === "session.resume") {
       const cwd = record(record(event.data)?.context)?.cwd;
       if (typeof cwd === "string" && cwd !== st.cwd) {
         st.cwd = cwd;
@@ -266,7 +322,8 @@ export class CliUsageScanner {
         timestamp,
         model,
         sessionId,
-        source: "cli",
+        source:
+          st.workspace?.clientName === JETBRAINS_CLIENT ? "jetbrains" : "cli",
         input: delta.input,
         output: delta.output,
         cacheRead: delta.cacheRead,
@@ -282,7 +339,11 @@ export class CliUsageScanner {
    * session whose project registers later can still be attributed. */
   private projectIdFor(st: FileState, resolve: Resolve): string {
     if (st.projectId) return st.projectId;
-    if (st.cwd === undefined) return CLI_PROJECT_ID;
+    const fallback =
+      st.workspace?.clientName === JETBRAINS_CLIENT
+        ? JETBRAINS_PROJECT_ID
+        : CLI_PROJECT_ID;
+    if (st.cwd === undefined) return fallback;
     let projectId: string | undefined;
     try {
       projectId = resolve(st.cwd);
@@ -290,6 +351,6 @@ export class CliUsageScanner {
       projectId = undefined;
     }
     if (projectId) st.projectId = projectId;
-    return projectId ?? CLI_PROJECT_ID;
+    return projectId ?? fallback;
   }
 }

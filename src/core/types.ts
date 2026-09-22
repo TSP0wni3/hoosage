@@ -1,7 +1,7 @@
 export interface Project {
   id: string;
   name: string;
-  kind: "folder" | "workspace" | "cli";
+  kind: "folder" | "workspace" | "cli" | "jetbrains";
   folderCount: number;
   createdAt: number;
   /** sha256 of each normalized, lowercased workspace folder path.
@@ -16,9 +16,10 @@ export interface UsageCall {
   timestamp: number;
   model: string;
   sessionId?: string;
-  /** "chat" spans arrive via the OTLP collector; "cli" entries are read from
-   * Copilot CLI session-state files. Absent means "chat". */
-  source?: "chat" | "cli";
+  /** "chat" spans arrive via the OTLP collector; "cli"/"jetbrains" entries are
+   * read from Copilot session-state files ("jetbrains" when workspace.yaml
+   * marks the session as created by the JetBrains plugin). Absent = "chat". */
+  source?: "chat" | "cli" | "jetbrains";
   input?: number;
   output?: number;
   cacheRead?: number;

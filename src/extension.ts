@@ -4,7 +4,12 @@ import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { UsageTailer } from "./core/tailer";
-import { CliUsageScanner, CLI_PROJECT_ID, folderPathHash } from "./core/cli";
+import {
+  CliUsageScanner,
+  CLI_PROJECT_ID,
+  JETBRAINS_PROJECT_ID,
+  folderPathHash,
+} from "./core/cli";
 import { startCollector, type Collector } from "./core/collector";
 import { exportCsv, filterCalls, totals } from "./core/analytics";
 import {
@@ -272,15 +277,20 @@ export async function activate(context: vscode.ExtensionContext) {
       ...[...tailers.values()].flatMap((t) => [...t.calls.values()]),
       ...cliScanner.calls.values(),
     ];
-    const cliCalls = calls.filter((c) => c.projectId === CLI_PROJECT_ID);
-    if (cliCalls.length && !projects.some((p) => p.id === CLI_PROJECT_ID))
-      projects.push({
-        id: CLI_PROJECT_ID,
-        name: "Copilot CLI",
-        kind: "cli",
-        folderCount: 0,
-        createdAt: Math.min(...cliCalls.map((c) => c.timestamp)),
-      });
+    for (const [bucketId, bucketName, kind] of [
+      [CLI_PROJECT_ID, "Copilot CLI", "cli"],
+      [JETBRAINS_PROJECT_ID, "Copilot (JetBrains)", "jetbrains"],
+    ] as const) {
+      const bucketCalls = calls.filter((c) => c.projectId === bucketId);
+      if (bucketCalls.length && !projects.some((p) => p.id === bucketId))
+        projects.push({
+          id: bucketId,
+          name: bucketName,
+          kind,
+          folderCount: 0,
+          createdAt: Math.min(...bucketCalls.map((c) => c.timestamp)),
+        });
+    }
     const problem = blocker() ?? collectorError;
     const connected =
       current &&
