@@ -67,7 +67,7 @@ export function storedSpan(call: UsageCall) {
     spanId,
     startTimeUnixNano: String(BigInt(call.timestamp) * 1_000_000n),
     endTimeUnixNano: String(
-      BigInt(call.timestamp + call.durationMs) * 1_000_000n,
+      BigInt(call.timestamp + (call.durationMs ?? 0)) * 1_000_000n,
     ),
     attributes: {
       "gen_ai.operation.name": "chat",

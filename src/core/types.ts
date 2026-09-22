@@ -1,9 +1,12 @@
 export interface Project {
   id: string;
   name: string;
-  kind: "folder" | "workspace";
+  kind: "folder" | "workspace" | "cli";
   folderCount: number;
   createdAt: number;
+  /** sha256 of each normalized, lowercased workspace folder path.
+   * Local-only attribution key for Copilot CLI sessions; never exported. */
+  pathHashes?: string[];
 }
 
 // This allowlist is the entire persisted/exported usage model. No prompts or code.
@@ -13,12 +16,18 @@ export interface UsageCall {
   timestamp: number;
   model: string;
   sessionId?: string;
+  /** "chat" spans arrive via the OTLP collector; "cli" entries are read from
+   * Copilot CLI session-state files. Absent means "chat". */
+  source?: "chat" | "cli";
   input?: number;
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
   nanoAiu?: number;
-  durationMs: number;
+  /** Model requests this entry represents. CLI shutdown deltas aggregate many
+   * requests into one entry; absent means 1. */
+  requests?: number;
+  durationMs?: number;
   failed: boolean;
 }
 

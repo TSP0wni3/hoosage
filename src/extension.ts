@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
 import { createHash, randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { UsageTailer } from "./core/tailer";
+import { CliUsageScanner, CLI_PROJECT_ID, folderPathHash } from "./core/cli";
 import { startCollector, type Collector } from "./core/collector";
 import { exportCsv, filterCalls, totals } from "./core/analytics";
 import {
@@ -50,10 +52,12 @@ export async function activate(context: vscode.ExtensionContext) {
             : "folder",
         folderCount: folders.length,
         createdAt: Date.now(),
+        pathHashes: folders.map((f) => folderPathHash(f.uri.fsPath)),
       }
     : undefined;
   const capture = (id: string) => join(root, id, "copilot.jsonl");
   const tailers = new Map<string, UsageTailer>();
+  const cliScanner = new CliUsageScanner();
   const views = new Set<vscode.Webview>();
   const statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
@@ -98,21 +102,38 @@ export async function activate(context: vscode.ExtensionContext) {
   let registrationError: string | undefined;
   if (current) {
     await mkdir(join(root, current.id), { recursive: true, mode: 0o700 });
-    try {
-      await writeFile(
-        join(root, current.id, "project.json"),
-        JSON.stringify(current),
-        { flag: "wx", mode: 0o600 },
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
+    await persistProject(current);
     await writeFile(capture(current.id), "", { flag: "a", mode: 0o600 });
     try {
       await registerWindow(storage, vscode.env.sessionId, current.id);
     } catch {
       registrationError =
         "This window was previously linked to another project. Open this project in a new window to keep usage separate.";
+    }
+  }
+
+  // project.json is written once ("wx"); a stored file predating pathHashes is
+  // upgraded in place so CLI sessions can be attributed to this project.
+  async function persistProject(project: Project) {
+    const metadata = join(root, project.id, "project.json");
+    try {
+      await writeFile(metadata, JSON.stringify(project), {
+        flag: "wx",
+        mode: 0o600,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const stored: Project = JSON.parse(await readFile(metadata, "utf8"));
+        if (!stored.pathHashes?.length && project.pathHashes?.length)
+          await writeFile(
+            metadata,
+            JSON.stringify({ ...stored, pathHashes: project.pathHashes }),
+            { mode: 0o600 },
+          );
+      } catch {
+        /* A failed upgrade only delays CLI attribution to this project. */
+      }
     }
   }
   const endpoint = () =>
@@ -223,7 +244,43 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     if (current && !projects.some((p) => p.id === current.id))
       projects.unshift(current);
-    const calls = [...tailers.values()].flatMap((t) => [...t.calls.values()]);
+    const projectByPath = new Map<string, string>();
+    for (const project of projects)
+      for (const hash of project.pathHashes ?? [])
+        if (!projectByPath.has(hash)) projectByPath.set(hash, project.id);
+    const resolveCwd = (cwd: string): string | undefined => {
+      let dir = cwd;
+      try {
+        dir = realpathSync(cwd);
+      } catch {}
+      for (;;) {
+        const hit = projectByPath.get(folderPathHash(dir));
+        if (hit) return hit;
+        const parent = dirname(dir);
+        if (parent === dir) return undefined;
+        dir = parent;
+      }
+    };
+    try {
+      await cliScanner.poll(resolveCwd);
+    } catch {
+      errors.push(
+        "Could not read Copilot CLI session data. Check storage permissions and refresh.",
+      );
+    }
+    const calls = [
+      ...[...tailers.values()].flatMap((t) => [...t.calls.values()]),
+      ...cliScanner.calls.values(),
+    ];
+    const cliCalls = calls.filter((c) => c.projectId === CLI_PROJECT_ID);
+    if (cliCalls.length && !projects.some((p) => p.id === CLI_PROJECT_ID))
+      projects.push({
+        id: CLI_PROJECT_ID,
+        name: "Copilot CLI",
+        kind: "cli",
+        folderCount: 0,
+        createdAt: Math.min(...cliCalls.map((c) => c.timestamp)),
+      });
     const problem = blocker() ?? collectorError;
     const connected =
       current &&
@@ -252,7 +309,7 @@ export async function activate(context: vscode.ExtensionContext) {
           : currentCalls.length
             ? "Tracking enabled. Updates every 5 seconds."
             : "Use Copilot Chat to record usage. Reload VS Code if you just enabled tracking.");
-    if ([...tailers.values()].some((t) => !t.caughtUp))
+    if ([...tailers.values()].some((t) => !t.caughtUp) || !cliScanner.caughtUp)
       errors.push(
         "Reading older local data. Totals will update as indexing completes.",
       );
@@ -263,10 +320,9 @@ export async function activate(context: vscode.ExtensionContext) {
       status,
       statusDetail,
       updatedAt: Date.now(),
-      skippedLines: [...tailers.values()].reduce(
-        (n, t) => n + t.skippedLines,
-        0,
-      ),
+      skippedLines:
+        [...tailers.values()].reduce((n, t) => n + t.skippedLines, 0) +
+        cliScanner.skippedLines,
       errors,
     };
   }
@@ -346,15 +402,7 @@ export async function activate(context: vscode.ExtensionContext) {
         await context.globalState.update(BACKUP, previous);
       }
       await mkdir(join(root, current.id), { recursive: true, mode: 0o700 });
-      const metadata = join(root, current.id, "project.json");
-      try {
-        await writeFile(metadata, JSON.stringify(current), {
-          flag: "wx",
-          mode: 0o600,
-        });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
+      await persistProject(current);
       // The collector persists only allowlisted usage metadata, never raw payloads.
       await writeFile(capture(current.id), "", { flag: "a", mode: 0o600 });
       if (!connection) {
@@ -471,9 +519,9 @@ export async function activate(context: vscode.ExtensionContext) {
               exportedAt: new Date().toISOString(),
               cost: costs(calls),
               priceTableDate: PRICING_DATE,
-              projects: snapshot.projects.filter(
-                (p) => projectId === "all" || p.id === projectId,
-              ),
+              projects: snapshot.projects
+                .filter((p) => projectId === "all" || p.id === projectId)
+                .map(({ pathHashes, ...p }) => p),
               calls,
             },
             null,

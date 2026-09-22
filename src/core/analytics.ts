@@ -4,8 +4,11 @@ import { callCost, PRICING_DATE } from "./pricing";
 export function totals(calls: UsageCall[]): Totals {
   const input = calls.reduce((n, c) => n + (c.input ?? 0), 0);
   const output = calls.reduce((n, c) => n + (c.output ?? 0), 0);
+  const durations = calls
+    .map((c) => c.durationMs)
+    .filter((d): d is number => d !== undefined);
   return {
-    calls: calls.length,
+    calls: calls.reduce((n, c) => n + (c.requests ?? 1), 0),
     input,
     output,
     tokens: input + output,
@@ -19,8 +22,8 @@ export function totals(calls: UsageCall[]): Totals {
       (c) => c.input === undefined || c.output === undefined,
     ).length,
     failed: calls.filter((c) => c.failed).length,
-    avgDurationMs: calls.length
-      ? calls.reduce((n, c) => n + c.durationMs, 0) / calls.length
+    avgDurationMs: durations.length
+      ? durations.reduce((n, d) => n + d, 0) / durations.length
       : 0,
   };
 }
@@ -94,6 +97,8 @@ export function exportCsv(calls: UsageCall[]): string {
     "cost_source",
     "cost_note",
     "price_table_date",
+    "source",
+    "requests",
   ];
   return (
     [
@@ -116,6 +121,8 @@ export function exportCsv(calls: UsageCall[]): string {
           cost.reason ??
             (cost.assumedCache ? "Missing cache detail assumed zero" : ""),
           cost.source === "estimated" ? PRICING_DATE : undefined,
+          c.source ?? "chat",
+          c.requests ?? 1,
         ];
       }),
     ]

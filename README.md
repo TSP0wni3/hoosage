@@ -32,6 +32,7 @@ Want a look first? **Explore a preview** shows clearly labelled sample data. Sam
 - CSV export of the selected project and period, including cost source and price-table date; unknown values stay empty.
 - A status bar indicator for today's current-project usage.
 - No hoosage account, cloud backend, credentials or outbound analytics.
+- Copilot CLI usage from local session-state files, grouped by working directory.
 
 ## Screenshots
 
@@ -81,6 +82,8 @@ USD represents usage value. Subscription fees, included allowances, discounts, t
 A project is a VS Code folder workspace, identified by a hash of its full workspace URI. All windows share an authenticated local collector. Each extension host registers its `vscode.env.sessionId` against that workspace; incoming OTLP resource `session.id` selects the registered project. Unknown windows are discarded, never assigned to the active editor. Registrations cannot be rebound to another workspace. Identically named folders, clones and worktrees remain separate. All registered projects on the same host and profile can be compared.
 
 A saved or multi-root workspace is one **Workspace group**. Copilot's telemetry cannot reliably divide a single request across roots, so hoosage does not invent that precision. Open roots in separate VS Code windows to track them independently.
+
+Copilot CLI sessions are read from `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`) — no setup required. Usage appears after a CLI session ends and is attributed to the tracked workspace matching the session's working directory; sessions outside tracked workspaces group under **Copilot CLI**.
 
 ## Local data and settings
 

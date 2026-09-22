@@ -1,0 +1,290 @@
+import { createHash } from "node:crypto";
+import { open, readdir, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join, resolve as resolvePath } from "node:path";
+import { StringDecoder } from "node:string_decoder";
+import type { UsageCall } from "./types";
+
+const MAX_LINE = 2 * 1024 * 1024;
+const BATCH = 4 * 1024 * 1024;
+const MAX_SKEW = 24 * 60 * 60 * 1000;
+
+/** Attribution bucket for CLI sessions whose cwd matches no known project. */
+export const CLI_PROJECT_ID = "copilot-cli";
+
+/** sha256 hex of the normalized folder path: absolute, forward slashes,
+ * no trailing slash, lowercased. Local-only attribution key; never exported. */
+export function folderPathHash(fsPath: string): string {
+  let normalized = resolvePath(fsPath).replace(/\\/g, "/");
+  while (normalized.length > 1 && normalized.endsWith("/"))
+    normalized = normalized.slice(0, -1);
+  return createHash("sha256").update(normalized.toLowerCase()).digest("hex");
+}
+
+interface ModelSnapshot {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  requests: number;
+}
+
+interface FileState {
+  offset: number;
+  inode?: number;
+  decoder: StringDecoder;
+  pending: string;
+  dropping: boolean;
+  cwd?: string;
+  projectId?: string;
+  emitted: Set<string>;
+  baselines: Map<string, ModelSnapshot>;
+}
+
+const freshState = (): FileState => ({
+  offset: 0,
+  decoder: new StringDecoder("utf8"),
+  pending: "",
+  dropping: false,
+  emitted: new Set(),
+  baselines: new Map(),
+});
+
+const num = (value: unknown): number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
+
+const record = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+type Resolve = (cwd: string) => string | undefined;
+
+/** Incremental reader for Copilot CLI session-state event streams
+ * (<root>/<session-id>/events.jsonl). Only type, id, timestamp,
+ * data.context.cwd and data.modelMetrics are ever extracted — prompts and
+ * tool arguments in these files are never retained. Shutdown metrics are
+ * cumulative per (session, model), so each event emits the delta against
+ * the stored baseline; inputTokens stays inclusive of cache tokens. */
+export class CliUsageScanner {
+  readonly calls = new Map<string, UsageCall>();
+  skippedLines = 0;
+  caughtUp = true;
+  detected = false;
+  private readonly root: string;
+  private readonly files = new Map<string, FileState>();
+  private busy = false;
+
+  constructor(root?: string) {
+    this.root =
+      root ??
+      join(
+        process.env.COPILOT_HOME || join(homedir(), ".copilot"),
+        "session-state",
+      );
+  }
+
+  async poll(resolve: Resolve): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const rootInfo = await stat(this.root).catch(() => undefined);
+      this.detected = rootInfo?.isDirectory() === true;
+      if (!this.detected) {
+        this.caughtUp = true;
+        return;
+      }
+      const entries = await readdir(this.root, { withFileTypes: true }).catch(
+        () => [] as never[],
+      );
+      let caughtUp = true;
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (!(await this.pollFile(entry.name, resolve))) caughtUp = false;
+      }
+      this.caughtUp = caughtUp;
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  /** Returns false while the file still has unread bytes. */
+  private async pollFile(
+    sessionId: string,
+    resolve: Resolve,
+  ): Promise<boolean> {
+    const path = join(this.root, sessionId, "events.jsonl");
+    let st = this.files.get(sessionId) ?? freshState();
+    const info = await stat(path).catch(() => undefined);
+    if (!info?.isFile()) return true;
+    if (st.inode !== info.ino || info.size < st.offset) {
+      // Rotation or truncation: emitted calls and cumulative baselines
+      // belong to the old stream and must not survive the reset.
+      for (const id of st.emitted) this.calls.delete(id);
+      st = freshState();
+    }
+    st.inode = info.ino;
+    this.files.set(sessionId, st);
+    const length = Math.min(BATCH, info.size - st.offset);
+    const caughtUp = info.size <= st.offset + length;
+    if (!length) return caughtUp;
+    const file = await open(path, "r").catch(() => undefined);
+    if (!file) return false;
+    try {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await file.read(buffer, 0, length, st.offset);
+      st.offset += bytesRead;
+      this.consume(
+        sessionId,
+        st,
+        st.decoder.write(buffer.subarray(0, bytesRead)),
+        resolve,
+      );
+    } catch {
+      return false;
+    } finally {
+      await file.close();
+    }
+    return caughtUp;
+  }
+
+  private consume(
+    sessionId: string,
+    st: FileState,
+    chunk: string,
+    resolve: Resolve,
+  ): void {
+    const lines = (st.pending + chunk).split("\n");
+    st.pending = lines.pop() ?? "";
+    for (const line of lines) {
+      if (st.dropping) {
+        st.dropping = false;
+        continue;
+      }
+      if (!line.trim()) continue;
+      if (line.length > MAX_LINE) {
+        this.skippedLines++;
+        continue;
+      }
+      try {
+        this.event(sessionId, st, line, resolve);
+      } catch {
+        this.skippedLines++;
+      }
+    }
+    if (st.pending.length > MAX_LINE) {
+      st.pending = "";
+      st.dropping = true;
+      this.skippedLines++;
+    }
+  }
+
+  private event(
+    sessionId: string,
+    st: FileState,
+    line: string,
+    resolve: Resolve,
+  ): void {
+    const event = record(JSON.parse(line));
+    if (!event) {
+      this.skippedLines++;
+      return;
+    }
+    if (event.type === "session.start") {
+      const cwd = record(record(event.data)?.context)?.cwd;
+      if (typeof cwd === "string" && cwd !== st.cwd) {
+        st.cwd = cwd;
+        st.projectId = undefined;
+      }
+      return;
+    }
+    if (event.type !== "session.shutdown") return;
+    const timestamp = Date.parse(event.timestamp as string);
+    if (!Number.isFinite(timestamp) || timestamp > Date.now() + MAX_SKEW) {
+      this.skippedLines++;
+      return;
+    }
+    const metrics = record(record(event.data)?.modelMetrics);
+    if (!metrics) return;
+    const eventId =
+      typeof event.id === "string" && event.id
+        ? event.id
+        : typeof event.id === "number" && Number.isFinite(event.id)
+          ? String(event.id)
+          : `t${timestamp}`;
+    for (const [model, raw] of Object.entries(metrics)) {
+      if (!model) continue;
+      const entry = record(raw);
+      const usage = record(entry?.usage);
+      if (!usage) continue;
+      const snapshot: ModelSnapshot = {
+        input: num(usage.inputTokens),
+        output: num(usage.outputTokens),
+        cacheRead: num(usage.cacheReadTokens),
+        cacheWrite: num(usage.cacheWriteTokens),
+        requests: num(record(entry?.requests)?.count),
+      };
+      if (
+        !snapshot.input &&
+        !snapshot.output &&
+        !snapshot.cacheRead &&
+        !snapshot.cacheWrite &&
+        !snapshot.requests
+      )
+        continue;
+      const baseline = st.baselines.get(model);
+      const delta: ModelSnapshot = {
+        input: Math.max(0, snapshot.input - (baseline?.input ?? 0)),
+        output: Math.max(0, snapshot.output - (baseline?.output ?? 0)),
+        cacheRead: Math.max(0, snapshot.cacheRead - (baseline?.cacheRead ?? 0)),
+        cacheWrite: Math.max(
+          0,
+          snapshot.cacheWrite - (baseline?.cacheWrite ?? 0),
+        ),
+        requests: Math.max(0, snapshot.requests - (baseline?.requests ?? 0)),
+      };
+      st.baselines.set(model, snapshot);
+      if (
+        !delta.input &&
+        !delta.output &&
+        !delta.cacheRead &&
+        !delta.cacheWrite &&
+        !delta.requests
+      )
+        continue;
+      const id = `cli:${sessionId}:${eventId}:${model}`;
+      this.calls.set(id, {
+        id,
+        projectId: this.projectIdFor(st, resolve),
+        timestamp,
+        model,
+        sessionId,
+        source: "cli",
+        input: delta.input,
+        output: delta.output,
+        cacheRead: delta.cacheRead,
+        cacheWrite: delta.cacheWrite,
+        requests: delta.requests,
+        failed: false,
+      });
+      st.emitted.add(id);
+    }
+  }
+
+  /** Resolved lazily at emit time; only positive matches are cached, so a
+   * session whose project registers later can still be attributed. */
+  private projectIdFor(st: FileState, resolve: Resolve): string {
+    if (st.projectId) return st.projectId;
+    if (st.cwd === undefined) return CLI_PROJECT_ID;
+    let projectId: string | undefined;
+    try {
+      projectId = resolve(st.cwd);
+    } catch {
+      projectId = undefined;
+    }
+    if (projectId) st.projectId = projectId;
+    return projectId ?? CLI_PROJECT_ID;
+  }
+}

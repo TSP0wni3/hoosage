@@ -79,7 +79,8 @@ function modelKey(model: string): string {
       /^claude-(\d+(?:[.-]\d+)?)-(sonnet|opus|haiku|fable)$/,
       "claude-$2-$1",
     )
-    .replace(/^(claude-(?:sonnet|opus|haiku|fable)-\d+)-(\d+)(?=-|$)/, "$1.$2");
+    .replace(/^(claude-(?:sonnet|opus|haiku|fable)-\d+)-(\d+)(?=-|$)/, "$1.$2")
+    .replace(/-1m(-internal)?$/, "");
 }
 
 export interface CallCost {
