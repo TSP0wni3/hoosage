@@ -1,0 +1,16 @@
+branches:
+  - main
+packages:
+  - name: hoosage
+    path: .
+    type: node
+    manifest: package.json
+    changelog: CHANGELOG.md
+    scopes:
+      - hoosage
+    dependencies: []
+hooks:
+  afterVersion:
+    - npm install --package-lock-only --no-audit --no-fund
+github:
+  releases: true

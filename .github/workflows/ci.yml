@@ -6,18 +6,55 @@ on:
 permissions:
   contents: read
 jobs:
-  verify:
+  commitlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: openhoo/hooversion/actions/lint@f0a37cca22997993ca6416010b81ca197a3ac580 # v1.1.2
+        with:
+          version: 1.1.2
+  verify:
+    needs: commitlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit
       - run: npm run check
       - run: npm run package
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hoosage-vsix
           path: hoosage.vsix
+  policy:
+    needs: commitlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: openhoo/hoolicy/actions/check@2175cd50a816e90b37a0395d6bb93e6ce729c256 # v0.4.0
+        with:
+          version: 0.4.0
+      - uses: openhoo/hooray/actions/scan@7f706fe4ae06f9a2408dc9d0abb78048d2366db7 # v0.9.0
+        with:
+          version: 0.9.0
+          policy: hooray-policy.yaml
+          format: table
+          output: ""
+      - uses: openhoo/hoonarqube/actions/analyze@1b08eba7832f32c6ed5233e51d725092c6e8de77 # v0.10.4
+        with:
+          version: 0.10.4
+          paths: |
+            src
+            test
+          output: ${{ runner.temp }}/hoonarqube.json
+          fail-on: none

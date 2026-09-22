@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "project": "hoosage",
+  "createdAt": "2026-09-22T16:59:21Z",
+  "toolVersion": "0.4.0",
+  "revision": "23cdc44d7309ecf0f11a41f59abe6cd3d52bc35a",
+  "policyDigest": "sha256:23a0a1252d62465c806e66a454ec7f1a6183b545823e50431f8799c16261373d",
+  "entries": [
+    {
+      "fingerprint": "6918615897f3e993585c526c1b5c579f59d1863b35a3251ae6dcfabf11c23871",
+      "ruleId": "repository.git-naming",
+      "severity": "error",
+      "policyDigest": "sha256:2695613ef57b33d61da679dfa8c467dd0615eb05d121546fe4aa19db77c52297",
+      "findingDigest": "sha256:792585ff172dbd182188f4eaaf0aa9c28bbf7cf01a8a701c3ccf45dab5806bef",
+      "createdAt": "2026-09-22T16:59:21Z"
+    }
+  ]
+}
