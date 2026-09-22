@@ -358,7 +358,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // The collector persists only allowlisted usage metadata, never raw payloads.
       await writeFile(capture(current.id), "", { flag: "a", mode: 0o600 });
       if (!connection) {
-        const token = randomBytes(24).toString("hex");
+        const token = randomBytes(24).toString("hex"); // hooray:allow-secret — runtime-generated collector URL token, not a stored credential
         const candidate = await startCollector({
           port: 0,
           token,
