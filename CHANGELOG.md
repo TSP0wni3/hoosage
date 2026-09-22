@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0 (2026-09-22)
+
+### Features
+
+- track JetBrains Copilot usage from session-state files (55ec15f)
+
 ## 0.5.1 (2026-09-22)
 
 ### Bug Fixes
