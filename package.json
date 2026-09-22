@@ -1,0 +1,150 @@
+{
+  "name": "hoosage",
+  "displayName": "hoosage \u2014 Copilot usage, by project",
+  "description": "Copilot costs, tokens and model calls by project.",
+  "version": "0.3.0",
+  "publisher": "openhoo",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.119.0",
+    "node": ">=22"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "copilot",
+    "usage",
+    "tokens",
+    "dashboard",
+    "analytics"
+  ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#111216",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openhoo/hoosage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/openhoo/hoosage/issues"
+  },
+  "homepage": "https://github.com/openhoo/hoosage#readme",
+  "main": "./dist/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "hoosage.open",
+        "title": "Open Dashboard",
+        "category": "hoosage",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "hoosage.enable",
+        "title": "Enable Tracking",
+        "category": "hoosage"
+      },
+      {
+        "command": "hoosage.disable",
+        "title": "Stop Tracking",
+        "category": "hoosage"
+      },
+      {
+        "command": "hoosage.refresh",
+        "title": "Refresh Usage",
+        "category": "hoosage",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "hoosage.export",
+        "title": "Export Usage",
+        "category": "hoosage"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hoosage",
+          "title": "hoosage",
+          "icon": "media/mark.svg"
+        }
+      ]
+    },
+    "views": {
+      "hoosage": [
+        {
+          "type": "webview",
+          "id": "hoosage.overview",
+          "name": "Project usage"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "hoosage.open",
+          "when": "view == hoosage.overview",
+          "group": "navigation"
+        },
+        {
+          "command": "hoosage.refresh",
+          "when": "view == hoosage.overview",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "hoosage",
+      "properties": {
+        "hoosage.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show today's USD usage value and observed Copilot tokens for the current project in the status bar."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package --no-dependencies --baseContentUrl https://github.com/openhoo/hoosage/blob/main --baseImagesUrl https://github.com/openhoo/hoosage/raw/main --out hoosage.vsix",
+    "preview": "node scripts/preview.mjs",
+    "test:extension": "node scripts/test-extension.mjs"
+  },
+  "devDependencies": {
+    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.222.0",
+    "@opentelemetry/resources": "^2.11.0",
+    "@opentelemetry/sdk-trace-node": "^2.11.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/node": "^22.20.4",
+    "@types/vscode": "1.118.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "prettier": "^3.9.8",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "protobufjs": "^8.8.0"
+  }
+}

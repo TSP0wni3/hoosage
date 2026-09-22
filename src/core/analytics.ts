@@ -1,0 +1,125 @@
+import type { UsageCall, Totals } from "./types";
+import { callCost, PRICING_DATE } from "./pricing";
+
+export function totals(calls: UsageCall[]): Totals {
+  const input = calls.reduce((n, c) => n + (c.input ?? 0), 0);
+  const output = calls.reduce((n, c) => n + (c.output ?? 0), 0);
+  return {
+    calls: calls.length,
+    input,
+    output,
+    tokens: input + output,
+    cacheRead: calls.reduce((n, c) => n + (c.cacheRead ?? 0), 0),
+    sessions: new Set(
+      calls
+        .filter((c) => c.sessionId)
+        .map((c) => `${c.projectId}:${c.sessionId}`),
+    ).size,
+    missingUsage: calls.filter(
+      (c) => c.input === undefined || c.output === undefined,
+    ).length,
+    failed: calls.filter((c) => c.failed).length,
+    avgDurationMs: calls.length
+      ? calls.reduce((n, c) => n + c.durationMs, 0) / calls.length
+      : 0,
+  };
+}
+
+export function startOfRange(days: number, now = Date.now()): number {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - days + 1);
+  return start.getTime();
+}
+
+export function filterCalls(
+  calls: UsageCall[],
+  projectId: string,
+  days: number,
+  now = Date.now(),
+): UsageCall[] {
+  return calls.filter(
+    (c) =>
+      (projectId === "all" || c.projectId === projectId) &&
+      c.timestamp >= startOfRange(days, now) &&
+      c.timestamp <= now,
+  );
+}
+
+export function daily(calls: UsageCall[], days: number, now = Date.now()) {
+  return Array.from({ length: days }, (_, i) => {
+    const date = new Date(startOfRange(days, now));
+    date.setDate(date.getDate() + i);
+    const end = new Date(date);
+    end.setDate(end.getDate() + 1);
+    return {
+      date: date.getTime(),
+      ...totals(
+        calls.filter(
+          (c) => c.timestamp >= date.getTime() && c.timestamp < end.getTime(),
+        ),
+      ),
+    };
+  });
+}
+
+export function byModel(calls: UsageCall[]) {
+  return [...new Set(calls.map((c) => c.model))]
+    .map((model) => ({
+      model,
+      ...totals(calls.filter((c) => c.model === model)),
+    }))
+    .sort((a, b) => b.tokens - a.tokens || b.calls - a.calls);
+}
+
+const csvCell = (value: unknown): string => {
+  let text = value === undefined ? "" : String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+};
+
+export function exportCsv(calls: UsageCall[]): string {
+  const header = [
+    "project_id",
+    "timestamp_utc",
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "duration_ms",
+    "failed",
+    "cache_write_tokens",
+    "reported_nano_aiu",
+    "cost_usd",
+    "cost_source",
+    "cost_note",
+    "price_table_date",
+  ];
+  return (
+    [
+      header,
+      ...calls.map((c) => {
+        const cost = callCost(c);
+        return [
+          c.projectId,
+          new Date(c.timestamp).toISOString(),
+          c.model,
+          c.input,
+          c.output,
+          c.cacheRead,
+          c.durationMs,
+          c.failed,
+          c.cacheWrite,
+          c.nanoAiu,
+          cost.usd,
+          cost.source,
+          cost.reason ??
+            (cost.assumedCache ? "Missing cache detail assumed zero" : ""),
+          cost.source === "estimated" ? PRICING_DATE : undefined,
+        ];
+      }),
+    ]
+      .map((row) => row.map(csvCell).join(","))
+      .join("\r\n") + "\r\n"
+  );
+}

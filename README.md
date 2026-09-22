@@ -1,0 +1,130 @@
+<div align="center">
+  <img src="media/icon.png" width="88" alt="hoosage owl" />
+  <h1>hoosage.</h1>
+  <p><strong>Copilot usage by project.</strong></p>
+  <p>A local Copilot usage dashboard for VS Code, built by OpenHoo.</p>
+</div>
+
+![Dark dashboard with USD costs, token trends, model usage and project comparisons — sample data](media/dashboard.png)
+
+*Dark overview. All screenshots show the current dashboard with labelled sample data.*
+
+Know where your Copilot usage goes, without leaving your editor. hoosage brings project comparisons, token trends, model breakdowns and session activity into a calm, responsive dashboard and a compact sidebar.
+
+## Install
+
+1. Download **hoosage.vsix** from this project's release or CI job artifacts.
+2. In VS Code, run **Extensions: Install from VSIX…** and select the file.
+3. Open a project, then run **hoosage: Open Dashboard**.
+4. Click **Enable tracking**, reload the window when prompted, and use Copilot Chat. Setup applies to all VS Code windows; each trusted project is registered separately. Reload other open windows once after initial setup.
+
+Requires VS Code **1.119 or newer**, with Copilot's OpenTelemetry settings available. Copilot must already be configured for actual AI use. The extension works in trusted folder workspaces on desktop VS Code, with real Copilot Pro sessions verified on macOS. Remote SSH, WSL and container hosts have not been verified. It does not run in browser-only VS Code or virtual workspaces.
+
+Want a look first? **Explore a preview** shows clearly labelled sample data. Samples never enter your usage history or exports.
+
+## What you get
+
+- A dashboard and Activity Bar view with dark, light, high-contrast and narrow layouts.
+- Costs in USD for the overview, projects, models, sessions and status bar.
+- Observed input/output tokens, model calls, linked sessions and average call duration.
+- Daily usage charts, model shares and a project comparison table.
+- 7-, 14- and 30-day filters, project selection and session drilldowns.
+- CSV export of the selected project and period, including cost source and price-table date; unknown values stay empty.
+- A status bar indicator for today's current-project usage.
+- No hoosage account, cloud backend, credentials or outbound analytics.
+
+## Screenshots
+
+### Project costs
+
+Compare each workspace's model calls, tokens and usage cost in US dollars. The **≈** marker identifies estimated costs.
+
+![Projects view comparing four workspaces by model calls, tokens, estimated USD cost and share of usage — sample data](media/screenshots/projects.png)
+
+### Session activity
+
+Filter by project and date range, then expand a session to see its model, input/output tokens and cost details.
+
+![Activity filtered to the docs project, with a session expanded to show model, token counts and estimated cost — sample data](media/screenshots/activity.png)
+
+<details>
+<summary><strong>Light theme</strong></summary>
+
+The dashboard follows your VS Code theme, with a light palette alongside the graphite and blue dark theme.
+
+![Light dashboard with USD costs, daily token chart, model breakdown and project table — sample data](media/screenshots/overview-light.png)
+
+</details>
+
+## What the numbers mean
+
+**These are observed Copilot Chat model calls, token counts and usage value, not a GitHub invoice.** One user prompt can trigger multiple model calls. Agent orchestration totals, logs and cumulative metrics are deliberately excluded because they can repeat the same consumption. Repeated trace/span IDs count once.
+
+Cache reads are displayed separately as reported by Copilot; they are **not added again** to input/output totals. Missing token values remain unknown and produce an incomplete-coverage notice. Sessions count only calls with an explicit conversation identifier; other calls appear under **Unlinked calls**.
+
+The extension does **not** report your invoice, remaining monthly allowance, premium requests, inline completion usage, pre-setup history, other machines or GitHub cloud-agent activity. Background agents are included only when their chat spans reach the configured endpoint.
+
+Date ranges use local calendar days, include today and exclude future events. Calls are assigned to their start date. Usage updates after Copilot exports its completed spans; hoosage polls local history every five seconds.
+
+## Costs in US dollars
+
+When a chat span includes `copilot_chat.copilot_usage_nano_aiu`, hoosage uses that reported per-request value. Nano-AIU / 1,000,000,000 gives AI credits; one AI credit is $0.01. An explicit reported zero is preserved. Session-wide cost attributes are never added to per-request costs.
+
+Otherwise, **≈** marks an estimate using the [GitHub Copilot model price table](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing), checked **2026-09-22**. The bundled table includes cache-read/write rates and long-context tiers. Cache reads and writes are subsets of OTel input tokens: `(input − reads − writes) × input rate + reads × cache rate + writes × write rate + output × output rate`, divided by one million.
+
+Missing cache details are assumed zero and flagged in cost details. Unknown models, incomplete token counts and inconsistent cache counts remain unpriced. **—** means no amount is available; **+** marks a subtotal that excludes unpriced calls. Expired promotional rates are not used for later calls. Historical calls without reported cost are estimated at the snapshot rates, not historical prices.
+
+USD represents usage value. Subscription fees, included allowances, discounts, taxes and additional charges are not calculated. Prices are bundled with the extension; no pricing service is contacted. The CSV carries the amount, source, assumption or exclusion reason, and estimate table date.
+
+## Project attribution
+
+A project is a VS Code folder workspace, identified by a hash of its full workspace URI. All windows share an authenticated local collector. Each extension host registers its `vscode.env.sessionId` against that workspace; incoming OTLP resource `session.id` selects the registered project. Unknown windows are discarded, never assigned to the active editor. Registrations cannot be rebound to another workspace. Identically named folders, clones and worktrees remain separate. All registered projects on the same host and profile can be compared.
+
+A saved or multi-root workspace is one **Workspace group**. Copilot's telemetry cannot reliably divide a single request across roots, so hoosage does not invent that precision. Open roots in separate VS Code windows to track them independently.
+
+## Local data and settings
+
+On explicit setup, hoosage changes these **user-level** Copilot settings:
+
+```jsonc
+{
+  "github.copilot.chat.otel.enabled": true,
+  "github.copilot.chat.otel.exporterType": "otlp-http",
+  "github.copilot.chat.otel.otlpEndpoint": "http://127.0.0.1:<local-port>/<collector-token>",
+  "github.copilot.chat.otel.outfile": "",
+  "github.copilot.chat.otel.captureContent": false,
+}
+```
+
+The listener binds only to `127.0.0.1`. It accepts OTLP JSON/protobuf and gzip, requires a random collector URL token, rejects browser-origin requests and limits request size. Metrics and logs are acknowledged and discarded. Only completed `chat` spans are retained, after an explicit allowlist removes prompts, responses, code, tool arguments, repository URLs and other attributes.
+
+History lives under `globalStorageUri/projects/<workspace-hash>/`; shared collector configuration and hashed window registrations live alongside `projects/`, outside your repository. VS Code 1.138 restricts these Copilot settings to application scope. Setup therefore uses user settings, without writing secrets into project files. Local desktop VS Code is verified; separate profiles and remote hosts must not share another host's endpoint. Telemetry environment overrides and enterprise policy conflicts are reported instead of silently redirecting them. VS Code's global telemetry-off preference is respected; it also disables Copilot's local OTel exporter upstream.
+
+**Stop tracking before uninstalling.** Run **hoosage: Stop Tracking** and reload all open windows to restore the previous user values. This stops collection for all projects in this VS Code configuration. Settings changed by you after setup are preserved. Stopping keeps your history. To delete history, stop tracking, reload, and delete the corresponding project directory from hoosage global storage. No automatic retention/rotation is performed in this first release; the sanitized JSONL file grows with usage.
+
+All registered windows share the collector; a remaining window can take over if its owner closes. Copilot calls made during a handover may be missed. Loopback transport is not protection against other processes already running as your OS user.
+
+## Development
+
+Node.js 22+ and npm:
+
+```sh
+npm ci
+npm run check       # TypeScript, ingestion/analytics tests, production build
+npm run preview     # Sample-data UI at http://127.0.0.1:4173
+npm run package     # hoosage.vsix
+```
+
+Press **F5** to launch an Extension Development Host. The production bundle contains no framework runtime or external assets. The only runtime dependency is the bundled protobuf decoder.
+
+`npm run test:extension` runs an isolated VS Code smoke test. It uses a separate profile and a synthetic OTLP producer; no account credentials or billable model calls are required. Set `VSCODE_EXECUTABLE` to use an existing VS Code binary. If Copilot is not automatically registered in the test profile, set `COPILOT_EXTENSION_PATH` to its installed extension directory. The test verifies activation, the actual enable command, user-setting readback, project identity, HTTP ingestion, deduplication, privacy and the real dashboard tab. It does not establish that a signed-in Copilot session has emitted usage.
+
+## Technical references
+
+- [VS Code: Monitor agent usage with OpenTelemetry](https://code.visualstudio.com/docs/agents/guides/monitoring-agents)
+- [VS Code webviews](https://code.visualstudio.com/api/extension-guides/webview)
+- [OTLP trace protobuf schema](https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/trace/v1/trace.proto)
+- [Copilot per-request cost attribute](https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/platform/otel/common/genAiAttributes.ts)
+- [GitHub billing usage API](https://docs.github.com/en/rest/billing/usage)
+
+MIT · OpenHoo. Independent project; not affiliated with GitHub or Microsoft.
