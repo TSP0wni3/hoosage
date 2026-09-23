@@ -30,6 +30,11 @@ test("discovers previously opened local folders from workspaceStorage, skips rem
       join(workspaceStorage, "kept", "workspace.json"),
       JSON.stringify({ folder: keptUri }),
     );
+    await mkdir(join(workspaceStorage, "duplicate"));
+    await writeFile(
+      join(workspaceStorage, "duplicate", "workspace.json"),
+      JSON.stringify({ folder: keptUri }),
+    );
 
     // Deleted folder: recorded in workspaceStorage but no longer on disk.
     const deletedUri = pathToFileURL(join(root, "gone")).toString();
@@ -52,6 +57,11 @@ test("discovers previously opened local folders from workspaceStorage, skips rem
       join(workspaceStorage, "remote", "workspace.json"),
       JSON.stringify({ folder: "vscode-remote://dev-container+abcd/workspaces/app" }),
     );
+    await mkdir(join(workspaceStorage, "network"));
+    await writeFile(
+      join(workspaceStorage, "network", "workspace.json"),
+      JSON.stringify({ folder: "file://server/share/project" }),
+    );
 
     const found = await discoverKnownFolders(globalStorage);
     assert.deepEqual(
@@ -61,11 +71,14 @@ test("discovers previously opened local folders from workspaceStorage, skips rem
     assert.equal(found[0]!.name, "kept-project");
     assert.equal(found[0]!.pathHash, folderPathHash(kept));
 
+    const before = Date.now();
     const project = placeholderProject(found[0]!);
+    const after = Date.now();
     assert.equal(project.id, idOf(keptUri));
     assert.equal(project.kind, "folder");
     assert.equal(project.folderCount, 1);
     assert.deepEqual(project.pathHashes, [folderPathHash(kept)]);
+    assert.ok(project.createdAt >= before && project.createdAt <= after);
     assert.ok(!JSON.stringify(project).includes(root));
   } finally {
     await rm(root, { recursive: true, force: true });

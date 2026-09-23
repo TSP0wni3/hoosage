@@ -9,11 +9,16 @@ const root = resolve(".test-work");
 const profile = join(root, "profile");
 const workspace = join(root, "sample-project");
 const autoProject = join(root, "auto-project");
+const knownProject = join(root, "known-project");
 const copilotHome = join(root, "copilot-home");
 const uri = pathToFileURL(workspace).toString();
 const id = createHash("sha256").update(uri).digest("hex").slice(0, 24);
 const autoId = createHash("sha256")
   .update(pathToFileURL(autoProject).toString())
+  .digest("hex")
+  .slice(0, 24);
+const knownId = createHash("sha256")
+  .update(pathToFileURL(knownProject).toString())
   .digest("hex")
   .slice(0, 24);
 const store = join(profile, "User/globalStorage/openhoo.hoosage/projects", id);
@@ -27,6 +32,13 @@ await rm(copilotHome, { recursive: true, force: true });
 await mkdir(store, { recursive: true });
 await mkdir(join(workspace, ".vscode"), { recursive: true });
 await mkdir(join(autoProject, ".git"), { recursive: true });
+await mkdir(knownProject, { recursive: true });
+const knownWindow = join(profile, "User/workspaceStorage/known-project");
+await mkdir(knownWindow, { recursive: true });
+await writeFile(
+  join(knownWindow, "workspace.json"),
+  JSON.stringify({ folder: pathToFileURL(knownProject).toString() }),
+);
 const cliSession = join(copilotHome, "session-state", "auto-project-session");
 await mkdir(cliSession, { recursive: true });
 await writeFile(
@@ -128,6 +140,13 @@ await runTests({
     COPILOT_HOME: copilotHome,
     HOOSAGE_TEST_PROJECT_ID: id,
     HOOSAGE_TEST_AUTO_PROJECT_ID: autoId,
+    HOOSAGE_TEST_KNOWN_PROJECT_ID: knownId,
+    HOOSAGE_TEST_KNOWN_PROJECT_RECORD: join(
+      profile,
+      "User/globalStorage/openhoo.hoosage/projects",
+      knownId,
+      "project.json",
+    ),
     HOOSAGE_TEST_ENDPOINT: `http://127.0.0.1:${port}/${token}`,
     HOOSAGE_TEST_CAPTURE: join(store, "copilot.jsonl"),
     HOOSAGE_TEST_PROJECT_RECORD: join(store, "project.json"),

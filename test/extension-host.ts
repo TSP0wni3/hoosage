@@ -13,6 +13,39 @@ export async function run() {
   const initial = await api.getSnapshot();
   assert.equal(initial.currentProjectId, process.env.HOOSAGE_TEST_PROJECT_ID);
   assert.equal(initial.status, "off", initial.statusDetail);
+  let discovered = initial;
+  for (
+    let i = 0;
+    i < 100 &&
+    !discovered.projects.some(
+      (project) => project.id === process.env.HOOSAGE_TEST_KNOWN_PROJECT_ID,
+    );
+    i++
+  ) {
+    await new Promise((r) => setTimeout(r, 50));
+    discovered = await api.getSnapshot();
+  }
+  assert.ok(
+    discovered.projects.some(
+      (project) =>
+        project.id === process.env.HOOSAGE_TEST_KNOWN_PROJECT_ID &&
+        project.name === "known-project",
+    ),
+    "A previously opened local folder registers without reopening it",
+  );
+  const knownRecord = JSON.parse(
+    await readFile(process.env.HOOSAGE_TEST_KNOWN_PROJECT_RECORD!, "utf8"),
+  );
+  assert.ok(
+    knownRecord.createdAt > Date.now() - 60_000,
+    "Discovery time cannot be presented as historical Chat usage",
+  );
+  assert.ok(
+    !discovered.calls.some(
+      (call) => call.projectId === process.env.HOOSAGE_TEST_KNOWN_PROJECT_ID,
+    ),
+    "A discovered folder begins with no captured usage",
+  );
   assert.ok(
     initial.projects.some(
       (project) =>

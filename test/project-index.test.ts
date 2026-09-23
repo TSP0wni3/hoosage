@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,8 +26,8 @@ test("local sessions discover separate Git projects without prior enable clicks"
     await writeFile(join(one, ".git"), "gitdir: elsewhere");
     await mkdir(join(two, ".git"));
     const index = new ProjectIndex([]);
-    assert.equal(index.resolve(nested), projectId(one));
-    assert.equal(index.resolve(two), projectId(two));
+    assert.equal(index.resolve(nested), projectId(await realpath(one)));
+    assert.equal(index.resolve(two), projectId(await realpath(two)));
     assert.equal(index.resolve("relative/path"), undefined);
     assert.equal(index.resolve(join(dir, "missing")), undefined);
     const projects = index.projects([]);

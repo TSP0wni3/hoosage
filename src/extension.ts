@@ -227,23 +227,23 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  // Pre-register folders this profile has opened before but that are not
-  // open right now, so they appear in the dashboard (with no usage yet)
-  // instead of only ever showing up after the user reopens them. Runs once
-  // per activation; existing project.json files are never overwritten
-  // (persistProject writes "wx"), so real usage history is never touched.
-  (async () => {
-    try {
+  // Register this profile's previously opened local folders in the background.
+  // These are empty placeholders, not evidence of earlier Chat collection.
+  // Remote workspace URIs have different identities and stay isolated.
+  if (!remoteName)
+    void (async () => {
       for (const folder of await discoverKnownFolders(storage)) {
         if (folder.id === current?.id) continue;
-        await mkdir(join(root, folder.id), { recursive: true, mode: 0o700 });
-        await persistProject(placeholderProject(folder));
+        try {
+          await mkdir(join(root, folder.id), { recursive: true, mode: 0o700 });
+          await persistProject(placeholderProject(folder));
+        } catch {
+          /* One unavailable project directory does not block the rest. */
+        }
       }
-    } catch {
-      /* Best-effort: a failed scan just means those folders stay undiscovered
-       * until the user opens them directly, same as before this feature. */
-    }
-  })();
+    })().catch(() => {
+      /* A missing workspaceStorage directory leaves discovery best-effort. */
+    });
 
   const endpoint = () =>
     connection
@@ -307,7 +307,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!current || !folders.length)
       return canStopTracking()
         ? "Tracking is enabled for other VS Code windows. Open a project folder to view usage, or stop tracking here."
-        : "Open a project folder to track Copilot Chat. Completed local CLI and JetBrains sessions are indexed automatically; File > Open Recent is not scanned.";
+        : "Open a project folder to track Copilot Chat. Previously opened local folders and completed local CLI and JetBrains sessions are indexed in the background.";
     // Newer VS Code builds bundle Copilot without exposing a separate extension
     // object. Feature-detect its registered setting instead of an extension ID.
     if (config().inspect("otlpEndpoint")?.defaultValue === undefined)
