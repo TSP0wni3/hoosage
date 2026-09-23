@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { folderPathHash } from "./cli";
@@ -52,17 +52,49 @@ interface ChatSession {
 
 type Path = (string | number)[];
 
-function parent(state: unknown, path: Path): Record<string | number, unknown> {
-  let node = state as Record<string | number, unknown>;
-  for (let i = 0; i < path.length - 1; i++)
-    node = node[path[i]!] as Record<string | number, unknown>;
-  return node;
+const MAX_SESSION_BYTES = 64 * 1024 * 1024;
+const MAX_MUTATION_DEPTH = 32;
+const MAX_ARRAY_ITEMS = 100_000;
+const forbiddenKeys = new Set(["__proto__", "prototype", "constructor"]);
+
+function safePath(value: unknown): value is Path {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= MAX_MUTATION_DEPTH &&
+    value.every(
+      (part) =>
+        (typeof part === "string" &&
+          part.length <= 256 &&
+          !forbiddenKeys.has(part)) ||
+        (typeof part === "number" &&
+          Number.isSafeInteger(part) &&
+          part >= 0 &&
+          part < MAX_ARRAY_ITEMS),
+    )
+  );
+}
+
+function parent(state: unknown, path: Path): Record<string | number, unknown> | undefined {
+  let node: unknown = state;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (!node || typeof node !== "object" || !Object.hasOwn(node, path[i]!))
+      return undefined;
+    node = (node as Record<string | number, unknown>)[path[i]!];
+  }
+  return node && typeof node === "object"
+    ? (node as Record<string | number, unknown>)
+    : undefined;
 }
 
 /** Mirrors VS Code's ObjectMutationLog replay. */
 export function replayMutationLog(raw: string): ChatSession | undefined {
   let state: unknown;
-  for (const line of raw.split("\n")) {
+  let cursor = 0;
+  while (cursor < raw.length) {
+    const next = raw.indexOf("\n", cursor);
+    const line = raw.slice(cursor, next < 0 ? raw.length : next);
+    cursor = next < 0 ? raw.length : next + 1;
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line) as {
@@ -72,19 +104,42 @@ export function replayMutationLog(raw: string): ChatSession | undefined {
         i?: number;
       };
       if (entry.kind === 0) {
-        state = entry.v;
+        if (entry.v && typeof entry.v === "object" && !Array.isArray(entry.v))
+          state = entry.v;
         continue;
       }
-      if (state === undefined || !Array.isArray(entry.k) || !entry.k.length)
+      if (state === undefined || !safePath(entry.k))
         continue;
       const node = parent(state, entry.k);
+      if (!node) continue;
       const key = entry.k[entry.k.length - 1]!;
-      if (entry.kind === 1) node[key] = entry.v;
+      if (entry.kind === 1) {
+        if (
+          Array.isArray(node) &&
+          key === "length" &&
+          (!Number.isSafeInteger(entry.v) ||
+            typeof entry.v !== "number" ||
+            entry.v < 0 ||
+            entry.v > MAX_ARRAY_ITEMS)
+        )
+          continue;
+        node[key] = entry.v;
+      }
       else if (entry.kind === 3) node[key] = undefined;
       else if (entry.kind === 2) {
-        const array = (node[key] as unknown[] | undefined) ?? [];
-        if (typeof entry.i === "number") array.length = entry.i;
-        if (Array.isArray(entry.v)) array.push(...entry.v);
+        if (!Array.isArray(entry.v)) continue;
+        const previous = Object.hasOwn(node, key) ? node[key] : undefined;
+        if (previous !== undefined && !Array.isArray(previous)) continue;
+        const array = previous ?? [];
+        if (!Array.isArray(array)) continue;
+        const nextLength = entry.i ?? array.length;
+        if (entry.i !== undefined) {
+          if (!Number.isSafeInteger(entry.i) || entry.i < 0 || entry.i > array.length)
+            continue;
+        }
+        if (nextLength + entry.v.length > MAX_ARRAY_ITEMS) continue;
+        array.length = nextLength;
+        for (const item of entry.v) array.push(item);
         node[key] = array;
       }
     } catch {
@@ -166,7 +221,9 @@ export function requestUsage(
     input,
     output,
     nanoAiu:
-      credits === undefined ? undefined : Math.round(credits * 1_000_000_000),
+      credits === undefined
+        ? undefined
+        : count(Math.round(credits * 1_000_000_000)),
     requests: rounds && rounds > 0 ? rounds : undefined,
     durationMs:
       count(request.elapsedMs) ?? count(result.timings?.totalElapsed),
@@ -180,6 +237,8 @@ async function sessionCalls(
 ): Promise<(UsageCall & { dedupeKey: string })[]> {
   let session: ChatSession | undefined;
   try {
+    const info = await stat(file);
+    if (!info.isFile() || info.size > MAX_SESSION_BYTES) return [];
     const raw = await readFile(file, "utf8");
     session = file.endsWith(".jsonl")
       ? replayMutationLog(raw)
@@ -192,7 +251,7 @@ async function sessionCalls(
     typeof session.sessionId === "string" && session.sessionId
       ? session.sessionId
       : basename(file).replace(/\.jsonl?$/, "");
-  return session.requests.flatMap((request) => {
+  return session.requests.slice(0, MAX_ARRAY_ITEMS).flatMap((request) => {
     if (!request || typeof request !== "object") return [];
     const call = requestUsage(request as ChatRequest, projectId, sessionId);
     return call ? [call] : [];
@@ -211,7 +270,8 @@ async function directoryCalls(
   }
   const calls: (UsageCall & { dedupeKey: string })[] = [];
   for (const file of files.filter((f) => /\.jsonl?$/.test(f)))
-    calls.push(...(await sessionCalls(join(dir, file), projectId)));
+    for (const call of await sessionCalls(join(dir, file), projectId))
+      calls.push(call);
   return calls;
 }
 
@@ -318,28 +378,22 @@ export function mergeStoredHistory(
   };
 }
 
-/** Drops imported requests that live OTel capture already recorded: a request
- * is covered when a live Chat span of the same project starts during it.
- * Imported requests outside live coverage (before setup, or while the
- * exporter was disconnected) are kept. */
+/** Treats the first day with live OTel capture as the start of live coverage.
+ * Request IDs are not shared between VS Code transcripts and OTel spans, so
+ * timing proximity cannot identify duplicates. Keep all imported requests
+ * before that local day; retain later ones in storage for future recovery. */
 export function withoutLiveOverlap(
   imported: UsageCall[],
   liveTimestamps: number[],
 ): UsageCall[] {
   if (!liveTimestamps.length) return imported;
-  const live = [...liveTimestamps].sort((a, b) => a - b);
-  return imported.filter((call) => {
-    const start = call.timestamp - 5_000;
-    const end = call.timestamp + (call.durationMs ?? 10 * 60_000) + 30_000;
-    let low = 0;
-    let high = live.length;
-    while (low < high) {
-      const mid = (low + high) >> 1;
-      if (live[mid]! < start) low = mid + 1;
-      else high = mid;
-    }
-    return !(low < live.length && live[low]! <= end);
-  });
+  let first = Infinity;
+  for (const timestamp of liveTimestamps)
+    if (Number.isFinite(timestamp) && timestamp < first) first = timestamp;
+  if (!Number.isFinite(first)) return imported;
+  const day = new Date(first);
+  const cutoff = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+  return imported.filter((call) => call.timestamp < cutoff);
 }
 
 /** Scans every Chat transcript of this VS Code profile. The earliest copy of
@@ -372,8 +426,11 @@ export async function scanChatHistory(
     if (!project) continue;
     const calls = await directoryCalls(join(dir, "chatSessions"), project.id);
     if (!calls.length) continue;
-    found.push(...calls);
-    const createdAt = Math.min(...calls.map((c) => c.timestamp));
+    let createdAt = Infinity;
+    for (const call of calls) {
+      found.push(call);
+      if (call.timestamp < createdAt) createdAt = call.timestamp;
+    }
     const known = projects.get(project.id);
     projects.set(project.id, {
       ...project,
@@ -384,7 +441,7 @@ export async function scanChatHistory(
     join(userDir, "globalStorage", "emptyWindowChatSessions"),
     NO_FOLDER_CHAT_PROJECT_ID,
   );
-  found.push(...noFolder);
+  for (const call of noFolder) found.push(call);
   found.sort((a, b) => a.timestamp - b.timestamp);
   const seen = new Set<string>();
   const calls: UsageCall[] = [];

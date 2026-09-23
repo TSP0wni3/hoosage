@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import {
   mergeStoredHistory,
   NO_FOLDER_CHAT_PROJECT_ID,
   replayMutationLog,
+  requestUsage,
   restoreHistory,
   scanChatHistory,
   withoutLiveOverlap,
@@ -52,6 +53,48 @@ test("replays VS Code mutation logs: set, push with truncate, delete", () => {
   assert.equal(state.requests[0]!.requestId, undefined);
   assert.equal(state.requests[1]!.timestamp, 5);
   assert.deepEqual(state.requests[1]!.response, [1, 9]);
+});
+
+test("rejects unsafe mutation paths and unbounded array operations", () => {
+  const state = replayMutationLog(
+    jsonl(
+      { kind: 0, v: { requests: [] } },
+      { kind: 1, k: ["__proto__", "hoosageProbe"], v: "modified" },
+      { kind: 1, k: ["constructor", "prototype", "hoosageProbe"], v: "modified" },
+      { kind: 2, k: ["requests"], i: 1_000_000_000, v: [{}] },
+      { kind: 1, k: ["requests", "length"], v: 1_000_000_000 },
+      { kind: 1, k: ["missing", "child"], v: "ignored" },
+      { kind: 2, k: ["requests"], v: [{ requestId: "safe" }] },
+    ),
+  ) as { requests: { requestId: string }[] };
+  assert.equal(({} as Record<string, unknown>).hoosageProbe, undefined);
+  assert.deepEqual(state.requests, [{ requestId: "safe" }]);
+});
+
+test("ignores reported credit values that cannot be represented safely", () => {
+  const call = requestUsage(
+    { timestamp: 1000, copilotCredits: Number.MAX_SAFE_INTEGER, result: {} },
+    "project",
+    "session",
+  );
+  assert.equal(call?.nanoAiu, undefined);
+});
+
+test("skips oversized transcript files without reading them", async () => {
+  const p = await profile();
+  try {
+    const folder = join(p.root, "repo");
+    const sessions = await p.workspace("one", { folder: pathToFileURL(folder).toString() });
+    const handle = await open(join(sessions, "oversized.jsonl"), "w");
+    try {
+      await handle.truncate(64 * 1024 * 1024 + 1);
+    } finally {
+      await handle.close();
+    }
+    assert.deepEqual((await scanChatHistory(p.globalStorage)).calls, []);
+  } finally {
+    await rm(p.root, { recursive: true, force: true });
+  }
 });
 
 test("recovers requests from jsonl and legacy json transcripts with reported cost", async () => {
@@ -258,14 +301,18 @@ test("stored history merges by id and restores only the usage allowlist", () => 
   assert.deepEqual(restoreHistory(undefined, "p"), []);
 });
 
-test("imported requests already covered by live spans are not double-counted", () => {
+test("counts all earlier imported requests, then uses a live-day coverage boundary", () => {
+  const before = new Date(2025, 0, 1, 12).getTime();
+  const liveDay = new Date(2025, 0, 2, 12).getTime();
   const imported = [
-    { id: "1", projectId: "p", timestamp: 1_000, durationMs: 60_000, model: "m", failed: false },
-    { id: "2", projectId: "p", timestamp: 500_000, durationMs: 10_000, model: "m", failed: false },
+    { id: "1", projectId: "p", timestamp: before, durationMs: 60_000, model: "m", failed: false },
+    { id: "2", projectId: "p", timestamp: before + 1_000, durationMs: 60_000, model: "m", failed: false },
+    { id: "3", projectId: "p", timestamp: liveDay - 60_000, durationMs: 60_000, model: "m", failed: false },
+    { id: "4", projectId: "p", timestamp: liveDay, durationMs: 60_000, model: "m", failed: false },
   ];
   assert.deepEqual(
-    withoutLiveOverlap(imported, [30_000]).map((c) => c.id),
-    ["2"],
+    withoutLiveOverlap(imported, [liveDay]).map((c) => c.id),
+    ["1", "2"],
   );
-  assert.deepEqual(withoutLiveOverlap(imported, []).map((c) => c.id), ["1", "2"]);
+  assert.deepEqual(withoutLiveOverlap(imported, []).map((c) => c.id), ["1", "2", "3", "4"]);
 });

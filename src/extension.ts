@@ -269,9 +269,8 @@ export async function activate(context: vscode.ExtensionContext) {
   // Projects with recovered usage are registered even when the folder was
   // deleted, is remote, or is a multi-root workspace: their identity matches
   // what an open window would derive, so later live usage joins the same card.
-  let chatHistory: Map<string, UsageCall[]> | undefined = remoteName
-    ? new Map()
-    : undefined;
+  let chatHistory = new Map<string, UsageCall[]>();
+  let chatHistoryComplete = Boolean(remoteName);
   const importedHistoryFile = (id: string) =>
     join(root, id, "chat-history.json");
   if (!remoteName)
@@ -332,6 +331,12 @@ export async function activate(context: vscode.ExtensionContext) {
         if (merged.calls.length) result.set(id, merged.calls);
       }
       chatHistory = result;
+      chatHistoryComplete = true;
+      // Transcript recovery runs in the background. Refresh once it finishes,
+      // even when another snapshot was already being read at that moment.
+      const pending = refreshPromise;
+      if (pending) void pending.finally(() => void refresh());
+      else void refresh();
     })();
 
   const endpoint = () =>
@@ -468,18 +473,16 @@ export async function activate(context: vscode.ExtensionContext) {
       ...[...tailers.values()].flatMap((t) => [...t.calls.values()]),
       ...cliScanner.calls.values(),
     ];
-    for (const [id, imported] of chatHistory ?? []) {
+    for (const [id, imported] of chatHistory) {
       const live = tailers.get(id);
-      calls.push(
-        ...withoutLiveOverlap(
-          imported,
-          live
-            ? [...live.calls.values()]
-                .filter((c) => !c.source || c.source === "chat")
-                .map((c) => c.timestamp)
-            : [],
-        ),
-      );
+      for (const call of withoutLiveOverlap(
+        imported,
+        live
+          ? [...live.calls.values()]
+              .filter((c) => !c.source || c.source === "chat")
+              .map((c) => c.timestamp)
+          : [],
+      )) calls.push(call);
     }
     projects.push(
       ...projectIndex
@@ -500,7 +503,7 @@ export async function activate(context: vscode.ExtensionContext) {
           name: bucketName,
           kind,
           folderCount: 0,
-          createdAt: Math.min(...bucketCalls.map((c) => c.timestamp)),
+          createdAt: bucketCalls.reduce((first, call) => Math.min(first, call.timestamp), Infinity),
         });
     }
     const problem = blocker() ?? collectorError;
@@ -539,12 +542,7 @@ export async function activate(context: vscode.ExtensionContext) {
               : "This project is registered automatically. Use Copilot Chat to record usage; reload if you just enabled tracking.");
     const indexing =
       [...tailers.values()].some((t) => !t.caughtUp) ||
-      !cliScanner.caughtUp ||
-      chatHistory === undefined;
-    if (indexing)
-      errors.push(
-        "Reading older local data. Totals will update as indexing completes.",
-      );
+      !cliScanner.caughtUp;
     return {
       projects,
       calls,
@@ -653,8 +651,8 @@ export async function activate(context: vscode.ExtensionContext) {
       `Current project registered here: ${registered ? "yes" : "no"}`,
       `Project record created here: ${registered && Number.isFinite(registered.createdAt) ? new Date(registered.createdAt).toISOString() : "unknown"}`,
       `Saved Chat entries for this project on this host: ${chatCalls.length}`,
-      `Imported earlier Chat requests for this project: ${current ? (chatHistory?.get(current.id)?.length ?? 0) : 0}`,
-      `Earlier Chat history import complete here: ${chatHistory ? "yes" : "no"}`,
+      `Imported earlier Chat requests for this project: ${current ? (chatHistory.get(current.id)?.length ?? 0) : 0}`,
+      `Earlier Chat history import complete here: ${chatHistoryComplete ? "yes" : "no"}`,
       `Saved Chat history file for this project: ${historyFile?.isFile() ? "present" : "missing"}`,
       `Saved Chat history file size: ${historyFile?.isFile() ? `${historyFile.size} bytes` : "unavailable"}`,
       `Saved Chat history file last modified: ${historyFile?.isFile() ? historyFile.mtime.toISOString() : "unavailable"}`,
