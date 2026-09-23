@@ -514,6 +514,7 @@ export async function activate(context: vscode.ExtensionContext) {
       `Extension host: ${location}`,
       `Extension storage fingerprint: ${storeId}`,
       `Current project ID: ${current?.id ?? "none"}`,
+      `Current project name: ${current?.name ?? "none"}`,
       `Current project registered here: ${registered ? "yes" : "no"}`,
       `Project record created here: ${registered && Number.isFinite(registered.createdAt) ? new Date(registered.createdAt).toISOString() : "unknown"}`,
       `Saved Chat entries for this project on this host: ${chatCalls.length}`,
