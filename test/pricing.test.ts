@@ -110,6 +110,12 @@ test("exact documented aliases resolve without guessing unknown models or modes"
   );
 });
 
+test("new Copilot model rates match the September 23 pricing table", () => {
+  assert.equal(callCost(call({ model: "GPT-6 Luna" })).usd, 0.172);
+  assert.equal(callCost(call({ model: "GPT-6 Sol" })).usd, 3.44);
+  assert.equal(callCost(call({ model: "Claude Opus 5.5" })).usd, 3.82);
+});
+
 test("unknown usage stays unavailable while known zero costs remain zero", () => {
   assert.equal(callCost(call({ input: undefined })).usd, undefined);
   assert.equal(callCost(call({ output: NaN })).usd, undefined);

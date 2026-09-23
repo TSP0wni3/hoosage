@@ -11,6 +11,7 @@ import {
   folderPathHash,
 } from "../src/core/cli";
 import { exportCsv, totals } from "../src/core/analytics";
+import { callCost } from "../src/core/pricing";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -140,6 +141,75 @@ test("cumulative shutdown metrics emit only the increment on resume", async () =
     assert.equal(inc.requests, 2);
     // First entry is untouched by the later cumulative snapshot.
     assert.equal(scanner.calls.get("cli:sess-2:e1:gpt-5")!.input, 1000);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI model cost uses reported cumulative nano-AIU only for reliable intervals", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hoosage-cli-"));
+  try {
+    const file = await sessionDir(dir, "sess-cost");
+    const metric = (input: number, nanoAiu?: number) => ({
+      ...metrics(input, 100, 0, 0, input / 100),
+      ...(nanoAiu === undefined ? {} : { totalNanoAiu: nanoAiu }),
+    });
+    await writeFile(
+      file,
+      [
+        shutdown("e1", "2026-09-22T10:01:00Z", {
+          "gpt-5.4": metric(100, 100_000_000_000),
+        }),
+        shutdown("e2", "2026-09-22T10:02:00Z", {
+          "gpt-5.4": metric(200, 150_000_000_000),
+        }),
+        shutdown("e3", "2026-09-22T10:03:00Z", {
+          "gpt-5.4": metric(300),
+        }),
+        shutdown("e4", "2026-09-22T10:04:00Z", {
+          "gpt-5.4": metric(400, 200_000_000_000),
+        }),
+        shutdown("e5", "2026-09-22T10:05:00Z", {
+          "gpt-5.4": metric(500, 210_000_000_000),
+        }),
+      ].join("\n") + "\n",
+    );
+    const scanner = new CliUsageScanner(dir);
+    await scanner.poll(() => "p");
+    const entries = ["e1", "e2", "e3", "e4", "e5"].map((id) =>
+      scanner.calls.get(`cli:sess-cost:${id}:gpt-5.4`)!,
+    );
+    assert.deepEqual(
+      entries.map((entry) => entry.nanoAiu),
+      [100_000_000_000, 50_000_000_000, undefined, undefined, 10_000_000_000],
+    );
+    assert.deepEqual(
+      entries.map((entry) => callCost(entry).source),
+      ["reported", "reported", "estimated", "estimated", "reported"],
+    );
+    assert.equal(callCost(entries[1]!).usd, 0.5);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("CLI retains reported AI credit cost when token counts are unavailable", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "hoosage-cli-"));
+  try {
+    const file = await sessionDir(dir, "sess-credits-only");
+    await writeFile(
+      file,
+      shutdown("e1", "2026-09-22T10:01:00Z", {
+        "unknown-model": { totalNanoAiu: 50_000_000_000 },
+      }) + "\n",
+    );
+    const scanner = new CliUsageScanner(dir);
+    await scanner.poll(() => "p");
+    const entry = scanner.calls.get("cli:sess-credits-only:e1:unknown-model")!;
+    assert.equal(entry.input, undefined);
+    assert.equal(entry.output, undefined);
+    assert.deepEqual(callCost(entry), { source: "reported", usd: 0.5 });
+    assert.equal(totals([entry]).missingUsage, 1);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

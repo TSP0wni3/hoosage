@@ -5,3 +5,7 @@ dist/
 .test-work/
 .DS_Store
 .hooversion/
+jetbrains/.gradle/
+jetbrains/.intellijPlatform/
+jetbrains/build/
+jetbrains/.idea/
