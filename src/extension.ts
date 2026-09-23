@@ -112,6 +112,7 @@ export async function activate(context: vscode.ExtensionContext) {
       : undefined;
   const capture = (id: string) => join(root, id, "copilot.jsonl");
   const tailers = new Map<string, UsageTailer>();
+  const discovering = new Set<string>();
   const cliScanner = new CliUsageScanner();
   const views = new Set<vscode.Webview>();
   const diagnostics = vscode.window.createOutputChannel("hoosage tracking");
@@ -234,11 +235,14 @@ export async function activate(context: vscode.ExtensionContext) {
     void (async () => {
       for (const folder of await discoverKnownFolders(storage)) {
         if (folder.id === current?.id) continue;
+        discovering.add(folder.id);
         try {
           await mkdir(join(root, folder.id), { recursive: true, mode: 0o700 });
           await persistProject(placeholderProject(folder));
         } catch {
           /* One unavailable project directory does not block the rest. */
+        } finally {
+          discovering.delete(folder.id);
         }
       }
     })().catch(() => {
@@ -351,7 +355,14 @@ export async function activate(context: vscode.ExtensionContext) {
             if (!tailers.has(id))
               tailers.set(id, new UsageTailer(capture(id), id));
             await tailers.get(id)!.poll();
-          } catch {
+          } catch (error) {
+            // The background registrar may have created the directory while
+            // project.json is still being written. The next refresh sees it.
+            if (
+              discovering.has(id) &&
+              (error as NodeJS.ErrnoException).code === "ENOENT"
+            )
+              return;
             errors.push(
               `Could not read local usage for ${id.slice(0, 8)}. Check storage permissions and refresh.`,
             );
