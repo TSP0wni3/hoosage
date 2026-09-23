@@ -41,11 +41,13 @@ jobs:
           version: ${{ env.HOOVERSION_VERSION }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           install-command: npm ci --no-audit
-      - name: Upload vsix to GitHub release
+      - name: Upload editor extensions to GitHub release
         if: steps.finalize.outputs.published == 'true'
         run: |
           gh run download "$SOURCE_RUN_ID" --name hoosage-vsix --dir .
+          gh run download "$SOURCE_RUN_ID" --name hoosage-jetbrains --dir .
           gh release upload "$RELEASE_TAG" hoosage.vsix --clobber
+          gh release upload "$RELEASE_TAG" hoosage-jetbrains-*.zip --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

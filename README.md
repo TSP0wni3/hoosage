@@ -13,6 +13,10 @@ Know where your Copilot usage goes, without leaving your editor. hoosage brings 
 
 ## Install
 
+**JetBrains IDEs:** Download `hoosage-jetbrains-*.zip` from the [GitHub Releases](https://github.com/openhoo/hoosage/releases) page and install it via **Settings → Plugins → Install Plugin from Disk**. The standalone [JetBrains plugin](jetbrains/README.md) provides a hoosage tool window for completed Copilot sessions in the current IDE project.
+
+**VS Code:**
+
 1. Download **hoosage.vsix** from this project's release or CI job artifacts.
 2. In VS Code, run **Extensions: Install from VSIX…** and select the file.
 3. Open a project, then run **hoosage: Open Dashboard**.
@@ -59,19 +63,19 @@ The dashboard follows your VS Code theme, with a light palette alongside the gra
 
 ## What the numbers mean
 
-**These are observed Copilot Chat model calls, token counts and usage value, not a GitHub invoice.** One user prompt can trigger multiple model calls. Agent orchestration totals, logs and cumulative metrics are deliberately excluded because they can repeat the same consumption. Repeated trace/span IDs count once.
+**These are observed Copilot Chat model calls and CLI session summaries, not a GitHub invoice.** One user prompt can trigger multiple model calls. Agent orchestration totals, logs and cumulative metrics are deliberately excluded from Chat calls because they can repeat the same consumption. Repeated trace/span IDs count once; CLI cumulative metrics are converted to increments between shutdowns.
 
 Cache reads are displayed separately as reported by Copilot; they are **not added again** to input/output totals. Missing token or CLI request counts remain unknown and produce an incomplete-coverage notice. Sessions count only calls with an explicit conversation identifier; each call without one appears separately as an **Unlinked call**.
 
 The extension does **not** report your invoice, remaining monthly allowance, premium requests, inline completion usage, pre-setup history, other machines or GitHub cloud-agent activity. Background agents are included only when their chat spans reach the configured endpoint.
 
-Date ranges use local calendar days, include today and exclude future events. Calls are assigned to their start date. Usage updates after Copilot exports its completed spans; hoosage polls local history every five seconds.
+Date ranges use local calendar days, include today and exclude future events. Chat calls are assigned to their start date; CLI summaries are assigned to their shutdown date. Chat usage updates after Copilot exports completed spans; CLI usage appears after session shutdown. hoosage polls local history every five seconds.
 
 ## Costs in US dollars
 
 When a chat span includes `copilot_chat.copilot_usage_nano_aiu`, hoosage uses that reported per-request value. Nano-AIU / 1,000,000,000 gives AI credits; one AI credit is $0.01. An explicit reported zero is preserved. Session-wide cost attributes are never added to per-request costs.
 
-Otherwise, **≈** marks an estimate using the [GitHub Copilot model price table](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing), checked **2026-09-22**. The bundled table includes cache-read/write rates and long-context tiers. Cache reads and writes are subsets of OTel input tokens: `(input − reads − writes) × input rate + reads × cache rate + writes × write rate + output × output rate`, divided by one million.
+For Copilot CLI and JetBrains session summaries, hoosage also prefers the reported per-model `totalNanoAiu` increment when consecutive cumulative snapshots permit a reliable difference. Otherwise, **≈** marks an estimate using the [GitHub Copilot model price table](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing), checked **2026-09-23**. The bundled table includes cache-read/write rates and long-context tiers. Cache reads and writes are subsets of OTel input tokens: `(input − reads − writes) × input rate + reads × cache rate + writes × write rate + output × output rate`, divided by one million.
 
 Missing cache details are assumed zero and flagged in cost details. Unknown models, incomplete token counts and inconsistent cache counts remain unpriced. A CLI session aggregate also stays unpriced when its total could cross a per-request long-context threshold. **—** means no amount is available; **+** marks a subtotal that excludes unpriced usage. Expired promotional rates are not used for later calls. Historical calls without reported cost are estimated at the snapshot rates, not historical prices.
 
@@ -83,7 +87,7 @@ A project is a VS Code folder workspace, identified by a hash of its full worksp
 
 A saved or multi-root workspace is one **Workspace group**. Copilot's telemetry cannot reliably divide a single request across roots, so hoosage does not invent that precision. Open roots in separate VS Code windows to track them independently.
 
-Copilot CLI sessions are read from `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`) — no setup required. Usage appears after a session ends and is attributed to the tracked workspace matching the session's working directory; sessions outside tracked workspaces group under **Copilot CLI**. Sessions created by the GitHub Copilot plugin for JetBrains IDEs (`client_name: copilot-intellij` in `workspace.yaml`) are labelled JetBrains and group under **Copilot (JetBrains)** when no workspace matches.
+Copilot CLI sessions are read from `~/.copilot/session-state` (or `$COPILOT_HOME/session-state`) — no setup required. Usage appears after a session ends and is attributed to the tracked workspace matching the session's working directory; sessions outside tracked workspaces or matching more than one workspace group under **Copilot CLI**. Sessions created by the GitHub Copilot plugin for JetBrains IDEs (`client_name: copilot-intellij` in `workspace.yaml`) are labelled JetBrains and group under **Copilot (JetBrains)** when no unambiguous workspace matches.
 
 ## Local data and settings
 

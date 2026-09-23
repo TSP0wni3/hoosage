@@ -1,6 +1,6 @@
 import type { UsageCall } from "./types";
 
-export const PRICING_DATE = "2026-09-22";
+export const PRICING_DATE = "2026-09-23";
 export const PRICING_SOURCE =
   "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing";
 
@@ -46,12 +46,19 @@ const rates: Record<string, Rate> = {
   "gpt-5.6-sol": tier(rate(4, 0.4, 20, 5), 272_000, rate(8, 0.8, 30, 10)),
   "gpt-5.6-terra": tier(rate(2, 0.2, 12, 2.5), 272_000, rate(4, 0.4, 18, 5)),
   "gpt-6-astra": tier(rate(10, 1, 50, 12.5), 272_000, rate(20, 2, 75, 25)),
+  "gpt-6-luna": tier(
+    rate(0.1, 0.01, 0.5, 0.125),
+    272_000,
+    rate(0.2, 0.02, 0.75, 0.25),
+  ),
+  "gpt-6-sol": tier(rate(2, 0.2, 10, 2.5), 272_000, rate(4, 0.4, 15, 5)),
   "claude-haiku-4.5": rate(1, 0.1, 5, 1.25),
   "claude-sonnet-4": rate(3, 0.3, 15, 3.75),
   "claude-sonnet-4.6": rate(3, 0.3, 15, 3.75),
   "claude-opus-4.7": rate(5, 0.5, 25, 6.25),
   "claude-opus-4.8": rate(5, 0.5, 25, 6.25),
   "claude-opus-5": rate(5, 0.5, 25, 6.25),
+  "claude-opus-5.5": rate(4, 0.2, 20, 5),
   "claude-sonnet-5": rate(2, 0.2, 10, 2.5),
   "claude-opus-4.8-fast": rate(10, 1, 50, 12.5),
   "claude-fable-5": rate(10, 1, 50, 12.5),

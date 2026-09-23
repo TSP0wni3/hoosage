@@ -251,18 +251,21 @@ export async function activate(context: vscode.ExtensionContext) {
     }
     if (current && !projects.some((p) => p.id === current.id))
       projects.unshift(current);
-    const projectByPath = new Map<string, string>();
+    const projectByPath = new Map<string, string | undefined>();
     for (const project of projects)
-      for (const hash of project.pathHashes ?? [])
+      for (const hash of project.pathHashes ?? []) {
         if (!projectByPath.has(hash)) projectByPath.set(hash, project.id);
+        else if (projectByPath.get(hash) !== project.id)
+          projectByPath.set(hash, undefined);
+      }
     const resolveCwd = (cwd: string): string | undefined => {
       let dir = cwd;
       try {
         dir = realpathSync(cwd);
       } catch {}
       for (;;) {
-        const hit = projectByPath.get(folderPathHash(dir));
-        if (hit) return hit;
+        const hash = folderPathHash(dir);
+        if (projectByPath.has(hash)) return projectByPath.get(hash);
         const parent = dirname(dir);
         if (parent === dir) return undefined;
         dir = parent;
@@ -537,7 +540,8 @@ export async function activate(context: vscode.ExtensionContext) {
         : JSON.stringify(
             {
               schemaVersion: 2,
-              measurement: "Observed Copilot chat spans; not GitHub billing",
+              measurement:
+                "Observed Copilot Chat spans and CLI session summaries; not GitHub billing",
               exportedAt: new Date().toISOString(),
               cost: costs(calls),
               priceTableDate: PRICING_DATE,
@@ -551,7 +555,7 @@ export async function activate(context: vscode.ExtensionContext) {
           );
     await vscode.workspace.fs.writeFile(uri, Buffer.from(content));
     await vscode.window.showInformationMessage(
-      `Exported ${calls.length} observed model calls.`,
+      `Exported ${calls.length} usage entries.`,
     );
   }
 

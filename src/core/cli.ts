@@ -35,6 +35,7 @@ interface ModelSnapshot {
   cacheRead?: number;
   cacheWrite?: number;
   requests?: number;
+  nanoAiu?: number;
 }
 
 interface FileState {
@@ -91,6 +92,19 @@ const num = (value: unknown): number | undefined =>
 
 const deltaCount = (current?: number, previous?: number) =>
   current === undefined ? undefined : Math.max(0, current - (previous ?? 0));
+
+// A newly appearing cumulative cost cannot be assigned to just the latest
+// interval if earlier snapshots for this model had no cost field.
+const deltaReportedCost = (
+  current: number | undefined,
+  previous: ModelSnapshot | undefined,
+): number | undefined => {
+  if (current === undefined) return undefined;
+  if (!previous) return current;
+  if (previous.nanoAiu === undefined || current < previous.nanoAiu)
+    return undefined;
+  return current - previous.nanoAiu;
+};
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -292,21 +306,22 @@ export class CliUsageScanner {
     for (const [model, raw] of Object.entries(metrics)) {
       if (!model) continue;
       const entry = record(raw);
-      const usage = record(entry?.usage);
-      if (!usage) continue;
+      const usage = record(entry?.usage) ?? {};
       const snapshot: ModelSnapshot = {
         input: num(usage.inputTokens),
         output: num(usage.outputTokens),
         cacheRead: num(usage.cacheReadTokens),
         cacheWrite: num(usage.cacheWriteTokens),
         requests: num(record(entry?.requests)?.count),
+        nanoAiu: num(entry?.totalNanoAiu),
       };
       if (
         !snapshot.input &&
         !snapshot.output &&
         !snapshot.cacheRead &&
         !snapshot.cacheWrite &&
-        !snapshot.requests
+        !snapshot.requests &&
+        !snapshot.nanoAiu
       )
         continue;
       const baseline = st.baselines.get(model);
@@ -316,6 +331,7 @@ export class CliUsageScanner {
         cacheRead: deltaCount(snapshot.cacheRead, baseline?.cacheRead),
         cacheWrite: deltaCount(snapshot.cacheWrite, baseline?.cacheWrite),
         requests: deltaCount(snapshot.requests, baseline?.requests),
+        nanoAiu: deltaReportedCost(snapshot.nanoAiu, baseline),
       };
       st.baselines.set(model, {
         input: snapshot.input ?? baseline?.input,
@@ -323,13 +339,15 @@ export class CliUsageScanner {
         cacheRead: snapshot.cacheRead ?? baseline?.cacheRead,
         cacheWrite: snapshot.cacheWrite ?? baseline?.cacheWrite,
         requests: snapshot.requests ?? baseline?.requests,
+        nanoAiu: snapshot.nanoAiu,
       });
       if (
         !delta.input &&
         !delta.output &&
         !delta.cacheRead &&
         !delta.cacheWrite &&
-        !delta.requests
+        !delta.requests &&
+        !delta.nanoAiu
       )
         continue;
       const id = `cli:${sessionId}:${eventId}:${model}`;
@@ -346,6 +364,7 @@ export class CliUsageScanner {
         cacheRead: delta.cacheRead,
         cacheWrite: delta.cacheWrite,
         requests: delta.requests,
+        nanoAiu: delta.nanoAiu,
         failed: false,
       });
       st.emitted.add(id);
