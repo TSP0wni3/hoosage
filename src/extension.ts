@@ -15,6 +15,13 @@ import {
   placeholderProject,
 } from "./core/workspace-discovery";
 import {
+  mergeStoredHistory,
+  NO_FOLDER_CHAT_PROJECT_ID,
+  restoreHistory,
+  scanChatHistory,
+  withoutLiveOverlap,
+} from "./core/chat-history-import";
+import {
   isOwnCollectorHealth,
   startCollector,
   type Collector,
@@ -33,7 +40,7 @@ import {
   costDescription,
   PRICING_DATE,
 } from "./core/pricing";
-import type { Project, Snapshot } from "./core/types";
+import type { Project, Snapshot, UsageCall } from "./core/types";
 import { registerWindow, routeWindow } from "./core/routing";
 import { hasTelemetryEnvironmentConflict } from "./core/environment";
 
@@ -256,6 +263,77 @@ export async function activate(context: vscode.ExtensionContext) {
       /* A missing workspaceStorage directory leaves discovery best-effort. */
     });
 
+  // Import earlier Chat usage that VS Code itself stored in its local Chat
+  // transcripts, once per activation. Recovered entries are saved per project
+  // (sanitized allowlist only) so they survive VS Code pruning its history.
+  // Projects with recovered usage are registered even when the folder was
+  // deleted, is remote, or is a multi-root workspace: their identity matches
+  // what an open window would derive, so later live usage joins the same card.
+  let chatHistory: Map<string, UsageCall[]> | undefined = remoteName
+    ? new Map()
+    : undefined;
+  const importedHistoryFile = (id: string) =>
+    join(root, id, "chat-history.json");
+  if (!remoteName)
+    void (async () => {
+      const recovered = new Map<string, UsageCall[]>();
+      try {
+        const scanned = await scanChatHistory(storage);
+        for (const project of scanned.projects) {
+          if (project.id === current?.id) continue;
+          discovering.add(project.id);
+          try {
+            await mkdir(join(root, project.id), {
+              recursive: true,
+              mode: 0o700,
+            });
+            await persistProject(project);
+          } catch {
+            /* One unavailable project directory does not block the rest. */
+          } finally {
+            discovering.delete(project.id);
+          }
+        }
+        for (const call of scanned.calls)
+          recovered.set(call.projectId, [
+            ...(recovered.get(call.projectId) ?? []),
+            call,
+          ]);
+      } catch {
+        /* Unreadable transcripts leave previously imported history intact. */
+      }
+      const result = new Map<string, UsageCall[]>();
+      let ids: string[] = [];
+      try {
+        ids = await readdir(root);
+      } catch {}
+      for (const id of new Set([...ids, ...recovered.keys()])) {
+        if (!/^[a-f0-9]{24}$/.test(id) && id !== NO_FOLDER_CHAT_PROJECT_ID)
+          continue;
+        let stored: UsageCall[] = [];
+        try {
+          stored = restoreHistory(
+            JSON.parse(await readFile(importedHistoryFile(id), "utf8")),
+            id,
+          );
+        } catch {}
+        const merged = mergeStoredHistory(stored, recovered.get(id) ?? []);
+        if (merged.changed)
+          try {
+            await mkdir(join(root, id), { recursive: true, mode: 0o700 });
+            await writeFile(
+              importedHistoryFile(id),
+              JSON.stringify({ version: 1, calls: merged.calls }),
+              { mode: 0o600 },
+            );
+          } catch {
+            /* Unsaved entries are still shown and retried next activation. */
+          }
+        if (merged.calls.length) result.set(id, merged.calls);
+      }
+      chatHistory = result;
+    })();
+
   const endpoint = () =>
     connection
       ? `http://127.0.0.1:${connection.port}/${connection.token}`
@@ -390,6 +468,19 @@ export async function activate(context: vscode.ExtensionContext) {
       ...[...tailers.values()].flatMap((t) => [...t.calls.values()]),
       ...cliScanner.calls.values(),
     ];
+    for (const [id, imported] of chatHistory ?? []) {
+      const live = tailers.get(id);
+      calls.push(
+        ...withoutLiveOverlap(
+          imported,
+          live
+            ? [...live.calls.values()]
+                .filter((c) => !c.source || c.source === "chat")
+                .map((c) => c.timestamp)
+            : [],
+        ),
+      );
+    }
     projects.push(
       ...projectIndex
         .projects([...cliScanner.calls.values()])
@@ -400,6 +491,7 @@ export async function activate(context: vscode.ExtensionContext) {
     for (const [bucketId, bucketName, kind] of [
       [CLI_PROJECT_ID, "Copilot CLI", "cli"],
       [JETBRAINS_PROJECT_ID, "Copilot (JetBrains)", "jetbrains"],
+      [NO_FOLDER_CHAT_PROJECT_ID, "Copilot Chat (no folder)", "chat"],
     ] as const) {
       const bucketCalls = calls.filter((c) => c.projectId === bucketId);
       if (bucketCalls.length && !projects.some((p) => p.id === bucketId))
@@ -446,7 +538,9 @@ export async function activate(context: vscode.ExtensionContext) {
               ? `Collector ready on the ${remoteLabel} host. Run Copilot Chat, then Diagnose Tracking to confirm a Chat span arrives here.`
               : "This project is registered automatically. Use Copilot Chat to record usage; reload if you just enabled tracking.");
     const indexing =
-      [...tailers.values()].some((t) => !t.caughtUp) || !cliScanner.caughtUp;
+      [...tailers.values()].some((t) => !t.caughtUp) ||
+      !cliScanner.caughtUp ||
+      chatHistory === undefined;
     if (indexing)
       errors.push(
         "Reading older local data. Totals will update as indexing completes.",
@@ -559,6 +653,8 @@ export async function activate(context: vscode.ExtensionContext) {
       `Current project registered here: ${registered ? "yes" : "no"}`,
       `Project record created here: ${registered && Number.isFinite(registered.createdAt) ? new Date(registered.createdAt).toISOString() : "unknown"}`,
       `Saved Chat entries for this project on this host: ${chatCalls.length}`,
+      `Imported earlier Chat requests for this project: ${current ? (chatHistory?.get(current.id)?.length ?? 0) : 0}`,
+      `Earlier Chat history import complete here: ${chatHistory ? "yes" : "no"}`,
       `Saved Chat history file for this project: ${historyFile?.isFile() ? "present" : "missing"}`,
       `Saved Chat history file size: ${historyFile?.isFile() ? `${historyFile.size} bytes` : "unavailable"}`,
       `Saved Chat history file last modified: ${historyFile?.isFile() ? historyFile.mtime.toISOString() : "unavailable"}`,
