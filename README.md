@@ -20,7 +20,7 @@ Know where your Copilot usage goes, without leaving your editor. hoosage brings 
 1. Download **hoosage.vsix** from this project's release or CI job artifacts.
 2. In VS Code, run **Extensions: Install from VSIX…** and select the file.
 3. Open a project, then run **hoosage: Open Dashboard**.
-4. Click **Enable Chat tracking once**, reload the window when prompted, and use Copilot Chat. The setting applies to all trusted projects in this VS Code profile. Other already-open windows need one reload after initial setup; newly opened projects register automatically. Previously opened local, single-folder workspaces found in this profile’s saved workspace records appear automatically as empty projects. Their earlier Chat usage cannot be reconstructed.
+4. Click **Enable Chat tracking once**, reload the window when prompted, and use Copilot Chat. The setting applies to all trusted projects in this VS Code profile. Other already-open windows need one reload after initial setup; newly opened projects register automatically. Previously opened local, single-folder workspaces found in this profile’s saved workspace records appear automatically as empty projects. Project discovery alone does not import earlier Chat usage.
 
 Requires VS Code **1.119 or newer**, with Copilot's OpenTelemetry settings available. Copilot must already be configured for actual AI use. The extension works in trusted folder workspaces on desktop VS Code, with real Copilot Pro sessions verified on macOS. Remote SSH, WSL and container Chat delivery have not been verified. It does not run in browser-only VS Code or virtual workspaces. In a remote window, install hoosage on the remote workspace host as described below.
 
