@@ -11,6 +11,10 @@ import {
 } from "./core/cli";
 import { ProjectIndex } from "./core/project-index";
 import {
+  discoverKnownFolders,
+  placeholderProject,
+} from "./core/workspace-discovery";
+import {
   isOwnCollectorHealth,
   startCollector,
   type Collector,
@@ -222,6 +226,25 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }
   }
+
+  // Pre-register folders this profile has opened before but that are not
+  // open right now, so they appear in the dashboard (with no usage yet)
+  // instead of only ever showing up after the user reopens them. Runs once
+  // per activation; existing project.json files are never overwritten
+  // (persistProject writes "wx"), so real usage history is never touched.
+  (async () => {
+    try {
+      for (const folder of await discoverKnownFolders(storage)) {
+        if (folder.id === current?.id) continue;
+        await mkdir(join(root, folder.id), { recursive: true, mode: 0o700 });
+        await persistProject(placeholderProject(folder));
+      }
+    } catch {
+      /* Best-effort: a failed scan just means those folders stay undiscovered
+       * until the user opens them directly, same as before this feature. */
+    }
+  })();
+
   const endpoint = () =>
     connection
       ? `http://127.0.0.1:${connection.port}/${connection.token}`
