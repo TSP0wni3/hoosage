@@ -135,6 +135,7 @@ export async function run() {
   assert.ok(
     diagnostics.includes(`Current project ID: ${process.env.HOOSAGE_TEST_PROJECT_ID}`),
   );
+  assert.ok(diagnostics.includes("Current project name: sample-project"));
   assert.match(diagnostics, /Extension storage fingerprint: [a-f0-9]{24}/);
   assert.ok(diagnostics.includes("Copilot endpoint matches collector: yes"));
   assert.ok(diagnostics.includes("Collector reachable here: yes"));
