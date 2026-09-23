@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, appendFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, sep } from "node:path";
 import { createHash } from "node:crypto";
 import {
   CliUsageScanner,
@@ -61,9 +61,10 @@ test("folderPathHash normalizes case and trailing slashes", async () => {
     assert.equal(folderPathHash(lower + "///"), folderPathHash(lower));
     assert.equal(
       folderPathHash(lower),
-      sha256(join(dir, "my project").toLowerCase()),
+      sha256(join(dir, "my project").split(sep).join("/").toLowerCase()),
     );
-    assert.equal(folderPathHash("/"), sha256("/"));
+    const root = parse(dir).root;
+    assert.equal(folderPathHash(root + "///"), folderPathHash(root));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

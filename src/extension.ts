@@ -11,6 +11,10 @@ import {
 } from "./core/cli";
 import { ProjectIndex } from "./core/project-index";
 import {
+  discoverKnownFolders,
+  placeholderProject,
+} from "./core/workspace-discovery";
+import {
   isOwnCollectorHealth,
   startCollector,
   type Collector,
@@ -108,6 +112,7 @@ export async function activate(context: vscode.ExtensionContext) {
       : undefined;
   const capture = (id: string) => join(root, id, "copilot.jsonl");
   const tailers = new Map<string, UsageTailer>();
+  const discovering = new Set<string>();
   const cliScanner = new CliUsageScanner();
   const views = new Set<vscode.Webview>();
   const diagnostics = vscode.window.createOutputChannel("hoosage tracking");
@@ -222,6 +227,28 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }
   }
+
+  // Register this profile's previously opened local folders in the background.
+  // These are empty placeholders, not evidence of earlier Chat collection.
+  // Remote workspace URIs have different identities and stay isolated.
+  if (!remoteName)
+    void (async () => {
+      for (const folder of await discoverKnownFolders(storage)) {
+        if (folder.id === current?.id) continue;
+        discovering.add(folder.id);
+        try {
+          await mkdir(join(root, folder.id), { recursive: true, mode: 0o700 });
+          await persistProject(placeholderProject(folder));
+        } catch {
+          /* One unavailable project directory does not block the rest. */
+        } finally {
+          discovering.delete(folder.id);
+        }
+      }
+    })().catch(() => {
+      /* A missing workspaceStorage directory leaves discovery best-effort. */
+    });
+
   const endpoint = () =>
     connection
       ? `http://127.0.0.1:${connection.port}/${connection.token}`
@@ -284,7 +311,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!current || !folders.length)
       return canStopTracking()
         ? "Tracking is enabled for other VS Code windows. Open a project folder to view usage, or stop tracking here."
-        : "Open a project folder to track Copilot Chat. Completed local CLI and JetBrains sessions are indexed automatically; File > Open Recent is not scanned.";
+        : "Open a project folder to track Copilot Chat. Previously opened local folders and completed local CLI and JetBrains sessions are indexed in the background.";
     // Newer VS Code builds bundle Copilot without exposing a separate extension
     // object. Feature-detect its registered setting instead of an extension ID.
     if (config().inspect("otlpEndpoint")?.defaultValue === undefined)
@@ -328,7 +355,14 @@ export async function activate(context: vscode.ExtensionContext) {
             if (!tailers.has(id))
               tailers.set(id, new UsageTailer(capture(id), id));
             await tailers.get(id)!.poll();
-          } catch {
+          } catch (error) {
+            // The background registrar may have created the directory while
+            // project.json is still being written. The next refresh sees it.
+            if (
+              discovering.has(id) &&
+              (error as NodeJS.ErrnoException).code === "ENOENT"
+            )
+              return;
             errors.push(
               `Could not read local usage for ${id.slice(0, 8)}. Check storage permissions and refresh.`,
             );
